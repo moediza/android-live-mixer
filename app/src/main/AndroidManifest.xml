@@ -8,6 +8,8 @@
         android:allowBackup="true"
         android:usesCleartextTraffic="true"
         android:hardwareAccelerated="true"
+        android:icon="@drawable/logo_oho"
+        android:roundIcon="@drawable/logo_oho"
         android:label="OHO AUDIO MIXER"
         android:theme="@style/Theme.Material3.Dark.NoActionBar">
         <activity

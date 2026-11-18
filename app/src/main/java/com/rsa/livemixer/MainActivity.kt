@@ -38,6 +38,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnDucking: Button
     private lateinit var btnEqToggle: Button
 
+    private lateinit var knobBass: RotaryKnobView
+    private lateinit var knobMid: RotaryKnobView
+    private lateinit var knobTreble: RotaryKnobView
+
     private lateinit var soundPool: SoundPool
     private val soundMap = HashMap<String, Int>()
     private val activeStreams = ArrayList<Int>()
@@ -48,8 +52,13 @@ class MainActivity : AppCompatActivity() {
 
     private val defaultFreqs = floatArrayOf(65f, 150f, 380f, 2200f, 5500f, 10000f)
     private val currentGains = floatArrayOf(0f, 0f, 0f, 0f, 0f, 0f)
+    
+    // Tone control offset values (Bass, Mid, Treble)
+    private var toneBass = 0f
+    private var toneMid = 0f
+    private var toneTreble = 0f
 
-    @SuppressLint("SetJavaScriptEnabled")
+    @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -196,6 +205,12 @@ class MainActivity : AppCompatActivity() {
             webViewClient = WebViewClient()
             webChromeClient = WebChromeClient()
             loadUrl("https://m.youtube.com")
+
+            // Kunci: Atasi nested scroll agar layar youtube bisa digulir bebas dan interaktif!
+            setOnTouchListener { v, event ->
+                v.parent.requestDisallowInterceptTouchEvent(true)
+                false
+            }
         }
         ytCard.addView(ytWebView)
 
@@ -224,7 +239,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(ytCard)
         root.addView(spacer(10))
 
-        // === 4. MUSIC VOL FADER & DUCKING -50% ===
+        // === 4. MUSIC VOL FADER & DUCKING ===
         val volCard = createCardPanel().apply { setPadding(16, 12, 16, 12) }
         val volRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -295,15 +310,16 @@ class MainActivity : AppCompatActivity() {
 
         eqView = ParametricEqView(this, defaultFreqs, currentGains) { bandIdx, gainDb ->
             currentGains[bandIdx] = gainDb
-            applyBandGain(bandIdx, gainDb)
+            applySingleBandCalculated(bandIdx)
         }.apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 240)
         }
         eqCard.addView(eqView)
 
+        // Preset Cepat EQ
         val presetRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 10, 0, 0)
+            setPadding(0, 10, 0, 10)
         }
         val presets = listOf(
             "DANGDUT" to floatArrayOf(6.5f, 4.0f, -1.5f, -3.0f, 3.5f, 5.0f),
@@ -325,8 +341,8 @@ class MainActivity : AppCompatActivity() {
                     val target = if (label == "CUSTOM") loadCustomPreset() else values
                     for (i in 0..5) {
                         currentGains[i] = target[i]
-                        applyBandGain(i, target[i])
                     }
+                    applyAllBands()
                     eqView.invalidate()
                     Toast.makeText(context, "EQ Mode: $label", Toast.LENGTH_SHORT).show()
                 }
@@ -334,6 +350,50 @@ class MainActivity : AppCompatActivity() {
             presetRow.addView(btn)
         }
         eqCard.addView(presetRow)
+
+        // === TAMBAHAN BARU: MASTER QUICK TONE KNOBS (BASS, MIDDLE, TREBLE) ===
+        val toneContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = makeRoundedBg("#181F2F", "#1E293B", 14f)
+            setPadding(12, 14, 12, 14)
+        }
+
+        toneContainer.addView(TextView(this).apply {
+            text = "QUICK TONE TUNING (BASS • MIDDLE • TREBLE)"
+            textSize = 8.5f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#94A3B8"))
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 12)
+        })
+
+        val knobsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+
+        knobBass = RotaryKnobView(this, "MASTER BASS", -12f, 12f, 0f, "dB", "#F59E0B") { value ->
+            toneBass = value
+            applyAllBands() // Re-calculate EQ bands with tone bass offset
+        }
+        
+        knobMid = RotaryKnobView(this, "MASTER MID", -12f, 12f, 0f, "dB", "#10B981") { value ->
+            toneMid = value
+            applyAllBands() // Re-calculate EQ bands with tone mid offset
+        }
+        
+        knobTreble = RotaryKnobView(this, "MASTER TREBLE", -12f, 12f, 0f, "dB", "#38BDF8") { value ->
+            toneTreble = value
+            applyAllBands() // Re-calculate EQ bands with tone treble offset
+        }
+
+        val knobLayout = LinearLayout.LayoutParams(0, 186, 1f)
+        knobsRow.addView(knobBass, knobLayout)
+        knobsRow.addView(knobMid, knobLayout)
+        knobsRow.addView(knobTreble, knobLayout)
+        toneContainer.addView(knobsRow)
+        
+        eqCard.addView(toneContainer)
         root.addView(eqCard)
         root.addView(spacer(10))
 
@@ -394,8 +454,8 @@ class MainActivity : AppCompatActivity() {
         val initPreset = presets[0].second
         for (i in 0..5) {
             currentGains[i] = initPreset[i]
-            applyBandGain(i, initPreset[i])
         }
+        applyAllBands()
         eqView.invalidate()
         setupVisualizer()
     }
@@ -436,22 +496,36 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) {}
     }
 
-    private fun applyBandGain(bandIdx: Int, gainDb: Float) {
+    // Melakukan kalkulasi total gain berdasarkan Kurva EQ dan quick Tone Knobs
+    private fun applySingleBandCalculated(bandIdx: Int) {
+        val toneOffset = when (bandIdx) {
+            0, 1 -> toneBass // Band rendah
+            2, 3 -> toneMid  // Band vokal/mid
+            else -> toneTreble // Band tinggi (4, 5)
+        }
+        val calculatedGain = (currentGains[bandIdx] + toneOffset).coerceIn(-15f, 15f)
+        
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && dynamicsProcessing != null) {
                 for (ch in 0..1) {
                     val band = dynamicsProcessing!!.getPreEqBandByChannelIndex(ch, bandIdx)
                     band.cutoffFrequency = defaultFreqs[bandIdx]
-                    band.gain = gainDb
+                    band.gain = calculatedGain
                     dynamicsProcessing!!.setPreEqBandByChannelIndex(ch, bandIdx, band)
                 }
             } else if (fallbackEqualizer != null) {
                 val numBands = fallbackEqualizer!!.numberOfBands.toInt()
                 if (bandIdx < numBands) {
-                    fallbackEqualizer!!.setBandLevel(bandIdx.toShort(), (gainDb * 100).toInt().toShort())
+                    fallbackEqualizer!!.setBandLevel(bandIdx.toShort(), (calculatedGain * 100).toInt().toShort())
                 }
             }
         } catch (_: Exception) {}
+    }
+
+    private fun applyAllBands() {
+        for (i in 0..5) {
+            applySingleBandCalculated(i)
+        }
     }
 
     private fun setupVisualizer() {
@@ -586,6 +660,7 @@ class MainActivity : AppCompatActivity() {
             color = Color.parseColor("#94A3B8"); textSize = 21f; textAlign = Paint.Align.CENTER
         }
 
+        @SuppressLint("ClickableViewAccessibility")
         override fun onTouchEvent(event: MotionEvent): Boolean {
             parent?.requestDisallowInterceptTouchEvent(true)
             val padX = 52f
@@ -658,6 +733,97 @@ class MainActivity : AppCompatActivity() {
                 canvas.drawCircle(pts[i].x, pts[i].y, r, nodeStrokePaint)
                 canvas.drawText(freqLabels[i], pts[i].x, height - 8f, textPaint)
             }
+        }
+    }
+
+    // === KOMPONEN KUSTOM: ROTARY KNOB ===
+    class RotaryKnobView(
+        context: Context,
+        private val label: String,
+        private val minVal: Float,
+        private val maxVal: Float,
+        defaultVal: Float,
+        private val unit: String,
+        accentHex: String,
+        private val onChange: (Float) -> Unit
+    ) : View(context) {
+
+        private var currentVal = defaultVal
+        private var lastY = 0f
+        private val accentColor = Color.parseColor(accentHex)
+
+        private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE; strokeWidth = 8f; strokeCap = Paint.Cap.ROUND
+            color = Color.parseColor("#242D3D")
+        }
+        private val activePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE; strokeWidth = 8f; strokeCap = Paint.Cap.ROUND
+            color = accentColor
+        }
+        private val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL; color = Color.parseColor("#141A25")
+        }
+        private val rimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE; strokeWidth = 1.5f; color = Color.parseColor("#3B4861")
+        }
+        private val pointerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE; strokeWidth = 4f; strokeCap = Paint.Cap.ROUND
+            color = accentColor
+        }
+        private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#94A3B8"); textSize = 16f
+            textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD
+        }
+        private val valPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE; textSize = 18f
+            textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD
+        }
+
+        fun setValue(v: Float) {
+            currentVal = v.coerceIn(minVal, maxVal)
+            onChange(currentVal)
+            invalidate()
+        }
+
+        @SuppressLint("ClickableViewAccessibility")
+        override fun onTouchEvent(event: MotionEvent): Boolean {
+            parent?.requestDisallowInterceptTouchEvent(true)
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> { lastY = event.y; return true }
+                MotionEvent.ACTION_MOVE -> {
+                    val dy = lastY - event.y
+                    lastY = event.y
+                    setValue(currentVal + (dy / 200f) * (maxVal - minVal))
+                    return true
+                }
+            }
+            return super.onTouchEvent(event)
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val cx = width / 2f
+            val cy = height * 0.38f
+            val radius = min(width, height) * 0.22f
+            val arcRect = RectF(cx - radius, cy - radius, cx + radius, cy + radius)
+
+            canvas.drawArc(arcRect, 135f, 270f, false, trackPaint)
+            val ratio = (currentVal - minVal) / (maxVal - minVal)
+            canvas.drawArc(arcRect, 135f, 270f * ratio, false, activePaint)
+
+            val innerR = radius * 0.72f
+            canvas.drawCircle(cx, cy, innerR, bodyPaint)
+            canvas.drawCircle(cx, cy, innerR, rimPaint)
+
+            val angleRad = Math.toRadians((135.0 + 270.0 * ratio))
+            val px = cx + cos(angleRad).toFloat() * (innerR * 0.75f)
+            val py = cy + sin(angleRad).toFloat() * (innerR * 0.75f)
+            canvas.drawLine(cx, cy, px, py, pointerPaint)
+
+            val formatted = if (minVal < 0 && currentVal > 0.4f) "+${currentVal.toInt()} $unit"
+            else "${currentVal.toInt()} $unit"
+            canvas.drawText(formatted, cx, cy + radius + 25f, valPaint)
+            canvas.drawText(label, cx, cy + radius + 46f, labelPaint)
         }
     }
 
