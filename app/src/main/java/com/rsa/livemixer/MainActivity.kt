@@ -4,6 +4,7 @@ import android.Manifest
 import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.*
 import android.graphics.drawable.GradientDrawable
 import android.media.AudioAttributes
@@ -77,7 +78,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Konversi otomatis dp & sp agar ukuran pas di Samsung A30 (1080p) maupun Vivo Y03t (720p)
     private fun dp(value: Int): Int =
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value.toFloat(), resources.displayMetrics).toInt()
 
