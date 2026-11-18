@@ -1,7 +1,10 @@
 package com.rsa.livemixer
 
+import android.Manifest
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.*
 import android.graphics.drawable.GradientDrawable
 import android.media.AudioAttributes
@@ -10,25 +13,33 @@ import android.media.SoundPool
 import android.media.audiofx.DynamicsProcessing
 import android.media.audiofx.Equalizer
 import android.media.audiofx.Visualizer
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.WindowManager
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.*
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import kotlin.math.*
 
 class MainActivity : AppCompatActivity() {
 
     private var isEqEnabled = true
+    private var isToneLocked = false
     private var isDucking = false
-    private var ytSizeMode = 0 // 0 = Normal Widescreen, 1 = Diperbesar, 2 = Dilipat
+    private var ytSizeMode = 0
     private var normalMusicVolume = 85
 
     private lateinit var ytWebView: WebView
@@ -37,6 +48,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var seekMusicVol: SeekBar
     private lateinit var btnDucking: Button
     private lateinit var btnEqToggle: Button
+    private lateinit var btnLockTone: Button
 
     private lateinit var knobBass: RotaryKnobView
     private lateinit var knobMid: RotaryKnobView
@@ -45,6 +57,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var soundPool: SoundPool
     private val soundMap = HashMap<String, Int>()
     private val activeStreams = ArrayList<Int>()
+    private var pendingPadKeyForPicker: String? = null
 
     private var dynamicsProcessing: DynamicsProcessing? = null
     private var fallbackEqualizer: Equalizer? = null
@@ -52,17 +65,26 @@ class MainActivity : AppCompatActivity() {
 
     private val defaultFreqs = floatArrayOf(65f, 150f, 380f, 2200f, 5500f, 10000f)
     private val currentGains = floatArrayOf(0f, 0f, 0f, 0f, 0f, 0f)
-    
-    // Tone control offset values (Bass, Mid, Treble)
+
     private var toneBass = 0f
     private var toneMid = 0f
     private var toneTreble = 0f
+
+    private val pickAudioLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        val key = pendingPadKeyForPicker
+        if (uri != null && key != null) {
+            importCustomSoundToPad(key, uri)
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        setupAudioDspSession0()
+        // Jaga layar HP tetap menyala selama live karaoke
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        setupAudioDspWithLimiter()
         setupSoundboard()
 
         val rootScroll = ScrollView(this).apply {
@@ -72,7 +94,7 @@ class MainActivity : AppCompatActivity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(22, 24, 22, 24)
+            setPadding(22, 24, 22, 28)
         }
 
         // === 1. TOP HEADER BAR ===
@@ -94,7 +116,7 @@ class MainActivity : AppCompatActivity() {
             letterSpacing = 0.05f
         })
         titleBox.addView(TextView(this).apply {
-            text = "KARAOKE LYRICS & MASTERING DECK"
+            text = "PRO KARAOKE & MASTERING DECK"
             textSize = 8.5f
             setTextColor(Color.parseColor("#38BDF8"))
             letterSpacing = 0.08f
@@ -106,7 +128,7 @@ class MainActivity : AppCompatActivity() {
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.WHITE)
             background = makeRoundedBg("#10B981", "#34D399", 16f)
-            layoutParams = LinearLayout.LayoutParams(150, 68).apply { marginEnd = 10 }
+            layoutParams = LinearLayout.LayoutParams(145, 68).apply { marginEnd = 10 }
             setOnClickListener {
                 isEqEnabled = !isEqEnabled
                 applyDspEnabled(isEqEnabled)
@@ -122,10 +144,10 @@ class MainActivity : AppCompatActivity() {
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#E2E8F0"))
             background = makeRoundedBg("#1E293B", "#475569", 16f)
-            layoutParams = LinearLayout.LayoutParams(130, 68)
+            layoutParams = LinearLayout.LayoutParams(125, 68)
             setOnClickListener {
                 saveCustomPreset()
-                Toast.makeText(context, "Preset EQ tersimpan ke CUSTOM!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Preset EQ & Tone tersimpan ke CUSTOM!", Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -138,17 +160,17 @@ class MainActivity : AppCompatActivity() {
         val vuBarRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(6, 6, 6, 12)
+            setPadding(6, 4, 6, 12)
         }
         vuBarRow.addView(TextView(this).apply {
-            text = "STEREO LED VU"
+            text = "STEREO VU"
             textSize = 8.5f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#94A3B8"))
             setPadding(0, 0, 12, 0)
         })
         vuMeter = StereoVuMeterView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(0, 26, 1f)
+            layoutParams = LinearLayout.LayoutParams(0, 28, 1f)
         }
         vuBarRow.addView(vuMeter)
         root.addView(vuBarRow)
@@ -206,13 +228,28 @@ class MainActivity : AppCompatActivity() {
             webChromeClient = WebChromeClient()
             loadUrl("https://m.youtube.com")
 
-            // Kunci: Atasi nested scroll agar layar youtube bisa digulir bebas dan interaktif!
-            setOnTouchListener { v, event ->
+            setOnTouchListener { v, _ ->
                 v.parent.requestDisallowInterceptTouchEvent(true)
                 false
             }
         }
         ytCard.addView(ytWebView)
+
+        // Kotak Catatan Request Lagu Penonton
+        val requestNoteInput = EditText(this).apply {
+            hint = "📝 Catatan Request Lagu Penonton (ketik di sini)..."
+            setHintTextColor(Color.parseColor("#64748B"))
+            setTextColor(Color.parseColor("#F1F5F9"))
+            textSize = 11f
+            background = makeRoundedBg("#0F172A", "#1E293B", 10f)
+            setPadding(18, 12, 18, 12)
+            isSingleLine = true
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = 8 }
+        }
+        ytCard.addView(requestNoteInput)
 
         btnResizeYt.setOnClickListener {
             ytSizeMode = (ytSizeMode + 1) % 3
@@ -239,7 +276,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(ytCard)
         root.addView(spacer(10))
 
-        // === 4. MUSIC VOL FADER & DUCKING ===
+        // === 4. MUSIC VOL FADER & SMOOTH DUCKING ===
         val volCard = createCardPanel().apply { setPadding(16, 12, 16, 12) }
         val volRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -279,16 +316,11 @@ class MainActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, 64)
             setOnClickListener {
                 isDucking = !isDucking
-                if (isDucking) {
-                    val ducked = (normalMusicVolume * 0.45f).toInt().coerceAtLeast(10)
-                    seekMusicVol.progress = ducked
-                    setSystemMusicVolume(ducked)
-                    background = makeRoundedBg("#D97706", "#FBBF24", 12f)
-                } else {
-                    seekMusicVol.progress = normalMusicVolume
-                    setSystemMusicVolume(normalMusicVolume)
-                    background = makeRoundedBg("#1E293B", "#475569", 12f)
-                }
+                val startVol = seekMusicVol.progress
+                val targetVol = if (isDucking) (normalMusicVolume * 0.45f).toInt().coerceAtLeast(10) else normalMusicVolume
+                animateVolumeFade(startVol, targetVol)
+                background = if (isDucking) makeRoundedBg("#D97706", "#FBBF24", 12f)
+                else makeRoundedBg("#1E293B", "#475569", 12f)
             }
         }
 
@@ -298,15 +330,50 @@ class MainActivity : AppCompatActivity() {
         root.addView(volCard)
         root.addView(spacer(10))
 
-        // === 5. 6-BAND MUSIC PARAMETRIC EQ ===
+        // === 5. 6-BAND MUSIC PARAMETRIC EQ + TONE LOCK ===
         val eqCard = createCardPanel().apply { setPadding(14, 12, 14, 12) }
-        eqCard.addView(TextView(this).apply {
-            text = "6-BAND MUSIC PARAMETRIC EQ (GESER TITIK KURVA)"
+
+        val eqHeaderRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(4, 0, 4, 8)
+        }
+
+        eqHeaderRow.addView(TextView(this).apply {
+            text = "6-BAND PARAMETRIC EQ & TONE"
             textSize = 9.5f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#38BDF8"))
-            setPadding(4, 0, 0, 8)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
+
+        // TOMBOL PENGUNCI EQ, Q, BASS, MID, TREBLE AGAR TIDAK KESENGGOL SAAT SCROLL
+        btnLockTone = Button(this).apply {
+            text = "🔓 UNLOCKED"
+            textSize = 9f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+            background = makeRoundedBg("#1E293B", "#38BDF8", 12f)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, 58)
+            setOnClickListener {
+                isToneLocked = !isToneLocked
+                eqView.isLocked = isToneLocked
+                knobBass.isLocked = isToneLocked
+                knobMid.isLocked = isToneLocked
+                knobTreble.isLocked = isToneLocked
+
+                if (isToneLocked) {
+                    text = "🔒 TERKUNCI"
+                    background = makeRoundedBg("#B91C1C", "#F87171", 12f)
+                    Toast.makeText(context, "EQ & Knob dikunci aman saat scroll", Toast.LENGTH_SHORT).show()
+                } else {
+                    text = "🔓 UNLOCKED"
+                    background = makeRoundedBg("#1E293B", "#38BDF8", 12f)
+                }
+            }
+        }
+        eqHeaderRow.addView(btnLockTone)
+        eqCard.addView(eqHeaderRow)
 
         eqView = ParametricEqView(this, defaultFreqs, currentGains) { bandIdx, gainDb ->
             currentGains[bandIdx] = gainDb
@@ -338,10 +405,12 @@ class MainActivity : AppCompatActivity() {
                     if (idx < presets.size - 1) marginEnd = 8
                 }
                 setOnClickListener {
-                    val target = if (label == "CUSTOM") loadCustomPreset() else values
-                    for (i in 0..5) {
-                        currentGains[i] = target[i]
+                    if (isToneLocked) {
+                        Toast.makeText(context, "Buka kunci (🔒 TERKUNCI) dulu untuk ganti preset", Toast.LENGTH_SHORT).show()
+                        return@setOnClickListener
                     }
+                    val target = if (label == "CUSTOM") loadCustomPreset() else values
+                    for (i in 0..5) currentGains[i] = target[i]
                     applyAllBands()
                     eqView.invalidate()
                     Toast.makeText(context, "EQ Mode: $label", Toast.LENGTH_SHORT).show()
@@ -351,7 +420,7 @@ class MainActivity : AppCompatActivity() {
         }
         eqCard.addView(presetRow)
 
-        // === TAMBAHAN BARU: MASTER QUICK TONE KNOBS (BASS, MIDDLE, TREBLE) ===
+        // MASTER QUICK TONE KNOBS (BASS, MIDDLE, TREBLE)
         val toneContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = makeRoundedBg("#181F2F", "#1E293B", 14f)
@@ -374,17 +443,15 @@ class MainActivity : AppCompatActivity() {
 
         knobBass = RotaryKnobView(this, "MASTER BASS", -12f, 12f, 0f, "dB", "#F59E0B") { value ->
             toneBass = value
-            applyAllBands() // Re-calculate EQ bands with tone bass offset
+            applyAllBands()
         }
-        
         knobMid = RotaryKnobView(this, "MASTER MID", -12f, 12f, 0f, "dB", "#10B981") { value ->
             toneMid = value
-            applyAllBands() // Re-calculate EQ bands with tone mid offset
+            applyAllBands()
         }
-        
         knobTreble = RotaryKnobView(this, "MASTER TREBLE", -12f, 12f, 0f, "dB", "#38BDF8") { value ->
             toneTreble = value
-            applyAllBands() // Re-calculate EQ bands with tone treble offset
+            applyAllBands()
         }
 
         val knobLayout = LinearLayout.LayoutParams(0, 186, 1f)
@@ -392,16 +459,16 @@ class MainActivity : AppCompatActivity() {
         knobsRow.addView(knobMid, knobLayout)
         knobsRow.addView(knobTreble, knobLayout)
         toneContainer.addView(knobsRow)
-        
+
         eqCard.addView(toneContainer)
         root.addView(eqCard)
         root.addView(spacer(10))
 
-        // === 6. INTERACTIVE SOUNDBOARD (8 PAD) ===
+        // === 6. INTERACTIVE SOUNDBOARD (8 PAD + LONG PRESS GANTI MP3) ===
         val sbdCard = createCardPanel().apply { setPadding(12, 12, 12, 12) }
         sbdCard.addView(TextView(this).apply {
-            text = "INTERACTIVE LIVE SOUNDBOARD"
-            textSize = 9.5f
+            text = "SOUNDBOARD (TEKAN TAHAN PAD UNTUK GANTI FILE MP3)"
+            textSize = 9f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#E2E8F0"))
             setPadding(4, 0, 0, 8)
@@ -434,6 +501,14 @@ class MainActivity : AppCompatActivity() {
                 setOnClickListener {
                     if (isStop) stopAllSounds() else playSoundPad(key)
                 }
+                if (!isStop) {
+                    setOnLongClickListener {
+                        pendingPadKeyForPicker = key
+                        Toast.makeText(context, "Pilih file MP3/WAV untuk tombol $label", Toast.LENGTH_SHORT).show()
+                        pickAudioLauncher.launch("audio/*")
+                        true
+                    }
+                }
             }
             val gp = GridLayout.LayoutParams().apply {
                 width = 0
@@ -452,17 +527,33 @@ class MainActivity : AppCompatActivity() {
 
         // Terapkan preset Dangdut sebagai bawaan awal
         val initPreset = presets[0].second
-        for (i in 0..5) {
-            currentGains[i] = initPreset[i]
-        }
+        for (i in 0..5) currentGains[i] = initPreset[i]
         applyAllBands()
         eqView.invalidate()
-        setupVisualizer()
+
+        // Minta izin runtime RECORD_AUDIO agar Stereo LED VU Meter aktif bergerak
+        ensureVisualizerPermissionAndStart()
     }
 
-    private fun setupAudioDspSession0() {
+    private fun ensureVisualizerPermissionAndStart() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            setupVisualizer()
+        } else {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 202)
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 202 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            setupVisualizer()
+        }
+    }
+
+    private fun setupAudioDspWithLimiter() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                // Aktifkan PreEQ 6-Band + Limiter Output agar suara ke soundcard tidak pecah
                 val cfg = DynamicsProcessing.Config.Builder(
                     DynamicsProcessing.VARIANT_FAVOR_FREQUENCY_RESOLUTION,
                     2, true, 6, false, 0, false, 0, true
@@ -479,6 +570,13 @@ class MainActivity : AppCompatActivity() {
                             band.gain = 0f
                             preEq.setBand(b, band)
                         }
+                        val limiter = getLimiterByChannelIndex(ch)
+                        limiter.isEnabled = true
+                        limiter.threshold = -1.5f
+                        limiter.ratio = 10f
+                        limiter.attackTime = 2f
+                        limiter.releaseTime = 60f
+                        setLimiterByChannelIndex(ch, limiter)
                     }
                 }
             } else {
@@ -496,15 +594,14 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) {}
     }
 
-    // Melakukan kalkulasi total gain berdasarkan Kurva EQ dan quick Tone Knobs
     private fun applySingleBandCalculated(bandIdx: Int) {
         val toneOffset = when (bandIdx) {
-            0, 1 -> toneBass // Band rendah
-            2, 3 -> toneMid  // Band vokal/mid
-            else -> toneTreble // Band tinggi (4, 5)
+            0, 1 -> toneBass
+            2, 3 -> toneMid
+            else -> toneTreble
         }
         val calculatedGain = (currentGains[bandIdx] + toneOffset).coerceIn(-15f, 15f)
-        
+
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && dynamicsProcessing != null) {
                 for (ch in 0..1) {
@@ -523,30 +620,51 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun applyAllBands() {
-        for (i in 0..5) {
-            applySingleBandCalculated(i)
-        }
+        for (i in 0..5) applySingleBandCalculated(i)
     }
 
     private fun setupVisualizer() {
         try {
+            visualizer?.release()
             visualizer = Visualizer(0).apply {
                 captureSize = Visualizer.getCaptureSizeRange()[0]
                 setDataCaptureListener(object : Visualizer.OnDataCaptureListener {
                     override fun onWaveFormDataCapture(v: Visualizer?, waveform: ByteArray?, rate: Int) {
                         if (waveform == null || waveform.isEmpty()) return
-                        var maxAmp = 0
-                        for (b in waveform) {
-                            val amp = abs((b.toInt() and 0xFF) - 128)
-                            if (amp > maxAmp) maxAmp = amp
+                        var sumSqL = 0.0
+                        var sumSqR = 0.0
+                        val half = waveform.size / 2
+                        for (i in 0 until half) {
+                            val sampleL = ((waveform[i].toInt() and 0xFF) - 128) / 128.0
+                            sumSqL += sampleL * sampleL
                         }
-                        vuMeter.setLevel(maxAmp / 128f)
+                        for (i in half until waveform.size) {
+                            val sampleR = ((waveform[i].toInt() and 0xFF) - 128) / 128.0
+                            sumSqR += sampleR * sampleR
+                        }
+                        val rmsL = sqrt(sumSqL / max(1, half)).toFloat()
+                        val rmsR = sqrt(sumSqR / max(1, waveform.size - half)).toFloat()
+                        vuMeter.setStereoLevels(rmsL * 3.2f, rmsR * 3.2f)
                     }
                     override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, rate: Int) {}
-                }, Visualizer.getMaxCaptureRate() / 2, true, false)
+                }, Visualizer.getMaxCaptureRate(), true, false)
                 enabled = true
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun animateVolumeFade(fromVol: Int, toVol: Int) {
+        ValueAnimator.ofInt(fromVol, toVol).apply {
+            duration = 350
+            addUpdateListener { anim ->
+                val v = anim.animatedValue as Int
+                seekMusicVol.progress = v
+                setSystemMusicVolume(v)
+            }
+            start()
+        }
     }
 
     private fun setSystemMusicVolume(percent: Int) {
@@ -572,11 +690,29 @@ class MainActivity : AppCompatActivity() {
             "airhorn" to "airhorn.mp3",
             "intro" to "intro.mp3"
         )
-        for ((key, file) in files) {
-            try {
-                val fd = assets.openFd(file)
-                soundMap[key] = soundPool.load(fd, 1)
-            } catch (_: IOException) {}
+        for ((key, defaultAsset) in files) {
+            val customFile = File(filesDir, "custom_$key.audio")
+            if (customFile.exists()) {
+                soundMap[key] = soundPool.load(customFile.absolutePath, 1)
+            } else {
+                try {
+                    val fd = assets.openFd(defaultAsset)
+                    soundMap[key] = soundPool.load(fd, 1)
+                } catch (_: IOException) {}
+            }
+        }
+    }
+
+    private fun importCustomSoundToPad(key: String, uri: Uri) {
+        try {
+            val destFile = File(filesDir, "custom_$key.audio")
+            contentResolver.openInputStream(uri)?.use { input ->
+                FileOutputStream(destFile).use { output -> input.copyTo(output) }
+            }
+            soundMap[key] = soundPool.load(destFile.absolutePath, 1)
+            Toast.makeText(this, "Suara baru berhasil dipasang ke tombol!", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "Gagal memuat file audio", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -640,7 +776,9 @@ class MainActivity : AppCompatActivity() {
         private val onBandChanged: (Int, Float) -> Unit
     ) : View(context) {
 
+        var isLocked = false
         private var selectedBand = -1
+
         private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.parseColor("#1E293B"); strokeWidth = 2f
         }
@@ -662,6 +800,9 @@ class MainActivity : AppCompatActivity() {
 
         @SuppressLint("ClickableViewAccessibility")
         override fun onTouchEvent(event: MotionEvent): Boolean {
+            // Jika dikunci, biarkan ScrollView luar menggulir layar dengan mulus!
+            if (isLocked) return false
+
             parent?.requestDisallowInterceptTouchEvent(true)
             val padX = 52f
             val usableW = width - padX * 2
@@ -671,7 +812,7 @@ class MainActivity : AppCompatActivity() {
 
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    var bestDist = 90f
+                    var bestDist = 85f
                     selectedBand = -1
                     for (i in 0..5) {
                         val nx = padX + i * stepX
@@ -703,14 +844,12 @@ class MainActivity : AppCompatActivity() {
             val midY = height * 0.48f
             val maxAmpY = height * 0.36f
 
-            // Garis grid vertikal & horizontal
             for (i in 0..5) {
                 val x = padX + i * stepX
                 canvas.drawLine(x, 16f, x, height - 34f, gridPaint)
             }
             canvas.drawLine(padX, midY, width - padX, midY, zeroLinePaint)
 
-            // Hitung koordinat titik & gambar kurva halus
             val pts = Array(6) { i ->
                 val x = padX + i * stepX
                 val y = midY - (gains[i] / 15f) * maxAmpY
@@ -723,12 +862,13 @@ class MainActivity : AppCompatActivity() {
                 val midX = (pts[i].x + pts[i + 1].x) / 2f
                 path.cubicTo(midX, pts[i].y, midX, pts[i + 1].y, pts[i + 1].x, pts[i + 1].y)
             }
+            curvePaint.color = if (isLocked) Color.parseColor("#64748B") else Color.parseColor("#22D3EE")
             canvas.drawPath(path, curvePaint)
 
-            // Gambar node lingkaran & label frekuensi
             val freqLabels = arrayOf("65Hz", "150Hz", "380Hz", "2.2kHz", "5.5kHz", "10kHz")
             for (i in 0..5) {
                 val r = if (i == selectedBand) 18f else 13f
+                nodeStrokePaint.color = if (isLocked) Color.parseColor("#94A3B8") else Color.parseColor("#38BDF8")
                 canvas.drawCircle(pts[i].x, pts[i].y, r, nodeFillPaint)
                 canvas.drawCircle(pts[i].x, pts[i].y, r, nodeStrokePaint)
                 canvas.drawText(freqLabels[i], pts[i].x, height - 8f, textPaint)
@@ -748,6 +888,7 @@ class MainActivity : AppCompatActivity() {
         private val onChange: (Float) -> Unit
     ) : View(context) {
 
+        var isLocked = false
         private var currentVal = defaultVal
         private var lastY = 0f
         private val accentColor = Color.parseColor(accentHex)
@@ -787,6 +928,9 @@ class MainActivity : AppCompatActivity() {
 
         @SuppressLint("ClickableViewAccessibility")
         override fun onTouchEvent(event: MotionEvent): Boolean {
+            // Jika dikunci, kembalikan false agar layar bisa di-scroll tanpa memutar knob
+            if (isLocked) return false
+
             parent?.requestDisallowInterceptTouchEvent(true)
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> { lastY = event.y; return true }
@@ -809,6 +953,8 @@ class MainActivity : AppCompatActivity() {
 
             canvas.drawArc(arcRect, 135f, 270f, false, trackPaint)
             val ratio = (currentVal - minVal) / (maxVal - minVal)
+            activePaint.color = if (isLocked) Color.parseColor("#64748B") else accentColor
+            pointerPaint.color = if (isLocked) Color.parseColor("#94A3B8") else accentColor
             canvas.drawArc(arcRect, 135f, 270f * ratio, false, activePaint)
 
             val innerR = radius * 0.72f
@@ -827,13 +973,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // === STEREO LED VU METER ===
+    // === STEREO LED VU METER (L & R) ===
     class StereoVuMeterView(context: Context) : View(context) {
-        private var level = 0.25f
+        private var levelL = 0.05f
+        private var levelR = 0.05f
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 
-        fun setLevel(l: Float) {
-            level = (l * 1.4f).coerceIn(0.05f, 1f)
+        fun setStereoLevels(l: Float, r: Float) {
+            levelL = l.coerceIn(0.04f, 1f)
+            levelR = r.coerceIn(0.04f, 1f)
             postInvalidate()
         }
 
@@ -842,10 +990,11 @@ class MainActivity : AppCompatActivity() {
             val segments = 26
             val gap = 4f
             val segW = (width - gap * (segments - 1)) / segments
-            val activeCount = (level * segments).toInt()
             val rowH = (height - 4f) / 2f
 
+            val levels = floatArrayOf(levelL, levelR)
             for (row in 0..1) {
+                val activeCount = (levels[row] * segments).toInt()
                 val top = row * (rowH + 4f)
                 for (i in 0 until segments) {
                     val left = i * (segW + gap)
