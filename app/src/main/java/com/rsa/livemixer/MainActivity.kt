@@ -4,7 +4,6 @@ import android.Manifest
 import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.pm.PackageManager
 import android.graphics.*
 import android.graphics.drawable.GradientDrawable
 import android.media.AudioAttributes
@@ -16,6 +15,7 @@ import android.media.audiofx.Visualizer
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -77,11 +77,36 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // Konversi otomatis dp & sp agar ukuran pas di Samsung A30 (1080p) maupun Vivo Y03t (720p)
+    private fun dp(value: Int): Int =
+        TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value.toFloat(), resources.displayMetrics).toInt()
+
+    private fun makeConsoleButton(
+        label: String,
+        fillHex: String,
+        strokeHex: String,
+        textColorHex: String = "#FFFFFF",
+        textSp: Float = 11f
+    ): Button = Button(this).apply {
+        text = label
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, textSp)
+        typeface = Typeface.DEFAULT_BOLD
+        setTextColor(Color.parseColor(textColorHex))
+        background = makeRoundedBg(fillHex, strokeHex, dp(8).toFloat())
+        gravity = Gravity.CENTER
+        setPadding(dp(8), 0, dp(8), 0)
+        minHeight = 0
+        minimumHeight = 0
+        minWidth = 0
+        minimumWidth = 0
+        maxLines = 1
+        isAllCaps = false
+    }
+
     @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Jaga layar HP tetap menyala selama live karaoke
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         setupAudioDspWithLimiter()
@@ -94,14 +119,14 @@ class MainActivity : AppCompatActivity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(22, 24, 22, 28)
+            setPadding(dp(12), dp(12), dp(12), dp(16))
         }
 
         // === 1. TOP HEADER BAR ===
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(4, 0, 4, 12)
+            setPadding(dp(2), 0, dp(2), dp(8))
         }
 
         val titleBox = LinearLayout(this).apply {
@@ -110,41 +135,31 @@ class MainActivity : AppCompatActivity() {
         }
         titleBox.addView(TextView(this).apply {
             text = "OHO AUDIO MIXER"
-            textSize = 18f
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#F8FAFC"))
-            letterSpacing = 0.05f
+            letterSpacing = 0.04f
         })
         titleBox.addView(TextView(this).apply {
             text = "PRO KARAOKE & MASTERING DECK"
-            textSize = 8.5f
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
             setTextColor(Color.parseColor("#38BDF8"))
-            letterSpacing = 0.08f
+            letterSpacing = 0.06f
         })
 
-        btnEqToggle = Button(this).apply {
-            text = "EQ ON"
-            textSize = 10f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.WHITE)
-            background = makeRoundedBg("#10B981", "#34D399", 16f)
-            layoutParams = LinearLayout.LayoutParams(145, 68).apply { marginEnd = 10 }
+        btnEqToggle = makeConsoleButton("EQ ON", "#10B981", "#34D399", "#FFFFFF", 11f).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(72), dp(36)).apply { marginEnd = dp(6) }
             setOnClickListener {
                 isEqEnabled = !isEqEnabled
                 applyDspEnabled(isEqEnabled)
                 text = if (isEqEnabled) "EQ ON" else "BYPASS"
-                background = if (isEqEnabled) makeRoundedBg("#10B981", "#34D399", 16f)
-                else makeRoundedBg("#334155", "#64748B", 16f)
+                background = if (isEqEnabled) makeRoundedBg("#10B981", "#34D399", dp(8).toFloat())
+                else makeRoundedBg("#334155", "#64748B", dp(8).toFloat())
             }
         }
 
-        val btnSave = Button(this).apply {
-            text = "SAVE"
-            textSize = 10f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.parseColor("#E2E8F0"))
-            background = makeRoundedBg("#1E293B", "#475569", 16f)
-            layoutParams = LinearLayout.LayoutParams(125, 68)
+        val btnSave = makeConsoleButton("SAVE", "#1E293B", "#475569", "#E2E8F0", 11f).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(64), dp(36))
             setOnClickListener {
                 saveCustomPreset()
                 Toast.makeText(context, "Preset EQ & Tone tersimpan ke CUSTOM!", Toast.LENGTH_SHORT).show()
@@ -160,58 +175,48 @@ class MainActivity : AppCompatActivity() {
         val vuBarRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(6, 4, 6, 12)
+            setPadding(dp(2), dp(2), dp(2), dp(8))
         }
         vuBarRow.addView(TextView(this).apply {
             text = "STEREO VU"
-            textSize = 8.5f
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#94A3B8"))
-            setPadding(0, 0, 12, 0)
+            setPadding(0, 0, dp(8), 0)
         })
         vuMeter = StereoVuMeterView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(0, 28, 1f)
+            layoutParams = LinearLayout.LayoutParams(0, dp(14), 1f)
         }
         vuBarRow.addView(vuMeter)
         root.addView(vuBarRow)
 
         // === 3. WIDESCREEN YOUTUBE KARAOKE PLAYER ===
-        val ytCard = createCardPanel().apply { setPadding(10, 10, 10, 10) }
+        val ytCard = createCardPanel().apply { setPadding(dp(8), dp(8), dp(8), dp(8)) }
         val ytBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(4, 0, 4, 8)
+            setPadding(dp(2), 0, dp(2), dp(6))
         }
 
         ytBar.addView(TextView(this).apply {
-            text = "▶ YOUTUBE KARAOKE"
-            textSize = 10f
+            text = "▶ YOUTUBE"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#F87171"))
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
 
-        val btnSearchYt = Button(this).apply {
-            text = "🔍 CARI LAGU"
-            textSize = 9.5f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.WHITE)
-            background = makeRoundedBg("#DC2626", "#F87171", 12f)
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, 64).apply {
-                marginEnd = 8
+        val btnSearchYt = makeConsoleButton("🔍 CARI LAGU", "#DC2626", "#F87171", "#FFFFFF", 10.5f).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(34)).apply {
+                marginEnd = dp(6)
             }
             setOnClickListener {
                 ytWebView.loadUrl("https://m.youtube.com/results?search_query=karaoke+campursari+dangdut+lirik")
             }
         }
 
-        val btnResizeYt = Button(this).apply {
-            text = "PERBESAR / LIPAT"
-            textSize = 9f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.parseColor("#E2E8F0"))
-            background = makeRoundedBg("#1E293B", "#475569", 12f)
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, 64)
+        val btnResizeYt = makeConsoleButton("PERBESAR / LIPAT", "#1E293B", "#475569", "#E2E8F0", 10f).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(34))
         }
 
         ytBar.addView(btnSearchYt)
@@ -219,7 +224,7 @@ class MainActivity : AppCompatActivity() {
         ytCard.addView(ytBar)
 
         ytWebView = WebView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 520)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(245))
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
@@ -235,19 +240,18 @@ class MainActivity : AppCompatActivity() {
         }
         ytCard.addView(ytWebView)
 
-        // Kotak Catatan Request Lagu Penonton
         val requestNoteInput = EditText(this).apply {
             hint = "📝 Catatan Request Lagu Penonton (ketik di sini)..."
             setHintTextColor(Color.parseColor("#64748B"))
             setTextColor(Color.parseColor("#F1F5F9"))
-            textSize = 11f
-            background = makeRoundedBg("#0F172A", "#1E293B", 10f)
-            setPadding(18, 12, 18, 12)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+            background = makeRoundedBg("#0F172A", "#1E293B", dp(6).toFloat())
+            setPadding(dp(10), dp(8), dp(10), dp(8))
             isSingleLine = true
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = 8 }
+            ).apply { topMargin = dp(6) }
         }
         ytCard.addView(requestNoteInput)
 
@@ -257,12 +261,12 @@ class MainActivity : AppCompatActivity() {
             when (ytSizeMode) {
                 0 -> {
                     ytWebView.visibility = View.VISIBLE
-                    lp.height = 520
+                    lp.height = dp(245)
                     btnResizeYt.text = "PERBESAR / LIPAT"
                 }
                 1 -> {
                     ytWebView.visibility = View.VISIBLE
-                    lp.height = 760
+                    lp.height = dp(370)
                     btnResizeYt.text = "LIPAT VIDEO"
                 }
                 2 -> {
@@ -274,10 +278,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         root.addView(ytCard)
-        root.addView(spacer(10))
+        root.addView(spacer(dp(8)))
 
         // === 4. MUSIC VOL FADER & SMOOTH DUCKING ===
-        val volCard = createCardPanel().apply { setPadding(16, 12, 16, 12) }
+        val volCard = createCardPanel().apply { setPadding(dp(10), dp(8), dp(10), dp(8)) }
         val volRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -285,7 +289,7 @@ class MainActivity : AppCompatActivity() {
 
         volRow.addView(TextView(this).apply {
             text = "MUSIC VOL"
-            textSize = 10f
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#CBD5E1"))
         })
@@ -294,8 +298,8 @@ class MainActivity : AppCompatActivity() {
             max = 100
             progress = normalMusicVolume
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                marginStart = 12
-                marginEnd = 12
+                marginStart = dp(8)
+                marginEnd = dp(8)
             }
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
@@ -307,20 +311,15 @@ class MainActivity : AppCompatActivity() {
             })
         }
 
-        btnDucking = Button(this).apply {
-            text = "DUCKING -50%"
-            textSize = 9.5f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.WHITE)
-            background = makeRoundedBg("#1E293B", "#475569", 12f)
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, 64)
+        btnDucking = makeConsoleButton("DUCKING -50%", "#1E293B", "#475569", "#FFFFFF", 10f).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(34))
             setOnClickListener {
                 isDucking = !isDucking
                 val startVol = seekMusicVol.progress
                 val targetVol = if (isDucking) (normalMusicVolume * 0.45f).toInt().coerceAtLeast(10) else normalMusicVolume
                 animateVolumeFade(startVol, targetVol)
-                background = if (isDucking) makeRoundedBg("#D97706", "#FBBF24", 12f)
-                else makeRoundedBg("#1E293B", "#475569", 12f)
+                background = if (isDucking) makeRoundedBg("#D97706", "#FBBF24", dp(8).toFloat())
+                else makeRoundedBg("#1E293B", "#475569", dp(8).toFloat())
             }
         }
 
@@ -328,33 +327,27 @@ class MainActivity : AppCompatActivity() {
         volRow.addView(btnDucking)
         volCard.addView(volRow)
         root.addView(volCard)
-        root.addView(spacer(10))
+        root.addView(spacer(dp(8)))
 
         // === 5. 6-BAND MUSIC PARAMETRIC EQ + TONE LOCK ===
-        val eqCard = createCardPanel().apply { setPadding(14, 12, 14, 12) }
+        val eqCard = createCardPanel().apply { setPadding(dp(10), dp(8), dp(10), dp(10)) }
 
         val eqHeaderRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(4, 0, 4, 8)
+            setPadding(dp(2), 0, dp(2), dp(6))
         }
 
         eqHeaderRow.addView(TextView(this).apply {
             text = "6-BAND PARAMETRIC EQ & TONE"
-            textSize = 9.5f
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#38BDF8"))
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
 
-        // TOMBOL PENGUNCI EQ, Q, BASS, MID, TREBLE AGAR TIDAK KESENGGOL SAAT SCROLL
-        btnLockTone = Button(this).apply {
-            text = "🔓 UNLOCKED"
-            textSize = 9f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.WHITE)
-            background = makeRoundedBg("#1E293B", "#38BDF8", 12f)
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, 58)
+        btnLockTone = makeConsoleButton("🔓 UNLOCKED", "#1E293B", "#38BDF8", "#FFFFFF", 10f).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(32))
             setOnClickListener {
                 isToneLocked = !isToneLocked
                 eqView.isLocked = isToneLocked
@@ -364,11 +357,11 @@ class MainActivity : AppCompatActivity() {
 
                 if (isToneLocked) {
                     text = "🔒 TERKUNCI"
-                    background = makeRoundedBg("#B91C1C", "#F87171", 12f)
+                    background = makeRoundedBg("#B91C1C", "#F87171", dp(8).toFloat())
                     Toast.makeText(context, "EQ & Knob dikunci aman saat scroll", Toast.LENGTH_SHORT).show()
                 } else {
                     text = "🔓 UNLOCKED"
-                    background = makeRoundedBg("#1E293B", "#38BDF8", 12f)
+                    background = makeRoundedBg("#1E293B", "#38BDF8", dp(8).toFloat())
                 }
             }
         }
@@ -379,14 +372,14 @@ class MainActivity : AppCompatActivity() {
             currentGains[bandIdx] = gainDb
             applySingleBandCalculated(bandIdx)
         }.apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 240)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(125))
         }
         eqCard.addView(eqView)
 
         // Preset Cepat EQ
         val presetRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 10, 0, 10)
+            setPadding(0, dp(8), 0, dp(8))
         }
         val presets = listOf(
             "DANGDUT" to floatArrayOf(6.5f, 4.0f, -1.5f, -3.0f, 3.5f, 5.0f),
@@ -395,14 +388,9 @@ class MainActivity : AppCompatActivity() {
             "CUSTOM" to loadCustomPreset()
         )
         presets.forEachIndexed { idx, (label, values) ->
-            val btn = Button(this).apply {
-                text = label
-                textSize = 9.5f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(Color.parseColor("#F1F5F9"))
-                background = makeRoundedBg("#1E293B", "#38BDF8", 12f)
-                layoutParams = LinearLayout.LayoutParams(0, 66, 1f).apply {
-                    if (idx < presets.size - 1) marginEnd = 8
+            val btn = makeConsoleButton(label, "#1E293B", "#38BDF8", "#F1F5F9", 10f).apply {
+                layoutParams = LinearLayout.LayoutParams(0, dp(34), 1f).apply {
+                    if (idx < presets.size - 1) marginEnd = dp(6)
                 }
                 setOnClickListener {
                     if (isToneLocked) {
@@ -423,17 +411,17 @@ class MainActivity : AppCompatActivity() {
         // MASTER QUICK TONE KNOBS (BASS, MIDDLE, TREBLE)
         val toneContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = makeRoundedBg("#181F2F", "#1E293B", 14f)
-            setPadding(12, 14, 12, 14)
+            background = makeRoundedBg("#181F2F", "#1E293B", dp(10).toFloat())
+            setPadding(dp(8), dp(8), dp(8), dp(8))
         }
 
         toneContainer.addView(TextView(this).apply {
             text = "QUICK TONE TUNING (BASS • MIDDLE • TREBLE)"
-            textSize = 8.5f
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#94A3B8"))
             gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 12)
+            setPadding(0, 0, 0, dp(6))
         })
 
         val knobsRow = LinearLayout(this).apply {
@@ -454,7 +442,7 @@ class MainActivity : AppCompatActivity() {
             applyAllBands()
         }
 
-        val knobLayout = LinearLayout.LayoutParams(0, 186, 1f)
+        val knobLayout = LinearLayout.LayoutParams(0, dp(96), 1f)
         knobsRow.addView(knobBass, knobLayout)
         knobsRow.addView(knobMid, knobLayout)
         knobsRow.addView(knobTreble, knobLayout)
@@ -462,16 +450,16 @@ class MainActivity : AppCompatActivity() {
 
         eqCard.addView(toneContainer)
         root.addView(eqCard)
-        root.addView(spacer(10))
+        root.addView(spacer(dp(8)))
 
         // === 6. INTERACTIVE SOUNDBOARD (8 PAD + LONG PRESS GANTI MP3) ===
-        val sbdCard = createCardPanel().apply { setPadding(12, 12, 12, 12) }
+        val sbdCard = createCardPanel().apply { setPadding(dp(8), dp(8), dp(8), dp(8)) }
         sbdCard.addView(TextView(this).apply {
             text = "SOUNDBOARD (TEKAN TAHAN PAD UNTUK GANTI FILE MP3)"
-            textSize = 9f
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#E2E8F0"))
-            setPadding(4, 0, 0, 8)
+            setPadding(dp(2), 0, 0, dp(6))
         })
 
         val sbdGrid = GridLayout(this).apply {
@@ -492,12 +480,13 @@ class MainActivity : AppCompatActivity() {
 
         pads.forEachIndexed { idx, (label, key, neonHex) ->
             val isStop = key == "STOP_ALL"
-            val btn = Button(this).apply {
-                text = label
-                textSize = 9.5f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(if (isStop) Color.parseColor("#FCA5A5") else Color.WHITE)
-                background = makeRoundedBg(if (isStop) "#3B1219" else "#161E2E", neonHex, 14f)
+            val btn = makeConsoleButton(
+                label,
+                if (isStop) "#3B1219" else "#161E2E",
+                neonHex,
+                if (isStop) "#FCA5A5" else "#FFFFFF",
+                10.5f
+            ).apply {
                 setOnClickListener {
                     if (isStop) stopAllSounds() else playSoundPad(key)
                 }
@@ -512,10 +501,10 @@ class MainActivity : AppCompatActivity() {
             }
             val gp = GridLayout.LayoutParams().apply {
                 width = 0
-                height = 96
+                height = dp(46)
                 columnSpec = GridLayout.spec(idx % 4, 1f)
                 rowSpec = GridLayout.spec(idx / 4, 1f)
-                setMargins(5, 5, 5, 5)
+                setMargins(dp(3), dp(3), dp(3), dp(3))
             }
             sbdGrid.addView(btn, gp)
         }
@@ -525,13 +514,11 @@ class MainActivity : AppCompatActivity() {
         rootScroll.addView(root)
         setContentView(rootScroll)
 
-        // Terapkan preset Dangdut sebagai bawaan awal
         val initPreset = presets[0].second
         for (i in 0..5) currentGains[i] = initPreset[i]
         applyAllBands()
         eqView.invalidate()
 
-        // Minta izin runtime RECORD_AUDIO agar Stereo LED VU Meter aktif bergerak
         ensureVisualizerPermissionAndStart()
     }
 
@@ -553,7 +540,6 @@ class MainActivity : AppCompatActivity() {
     private fun setupAudioDspWithLimiter() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                // Aktifkan PreEQ 6-Band + Limiter Output agar suara ke soundcard tidak pecah
                 val cfg = DynamicsProcessing.Config.Builder(
                     DynamicsProcessing.VARIANT_FAVOR_FREQUENCY_RESOLUTION,
                     2, true, 6, false, 0, false, 0, true
@@ -740,7 +726,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun createCardPanel(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        background = makeRoundedBg("#121722", "#263248", 18f)
+        background = makeRoundedBg("#121722", "#263248", dp(10).toFloat())
     }
 
     private fun makeRoundedBg(fillHex: String, strokeHex: String, radius: Float): GradientDrawable =
@@ -778,41 +764,41 @@ class MainActivity : AppCompatActivity() {
 
         var isLocked = false
         private var selectedBand = -1
+        private val d = context.resources.displayMetrics.density
 
         private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#1E293B"); strokeWidth = 2f
+            color = Color.parseColor("#1E293B"); strokeWidth = 1f * d
         }
         private val zeroLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#334155"); strokeWidth = 3f
+            color = Color.parseColor("#334155"); strokeWidth = 1.5f * d
         }
         private val curvePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE; strokeWidth = 6f; color = Color.parseColor("#22D3EE")
+            style = Paint.Style.STROKE; strokeWidth = 2.8f * d; color = Color.parseColor("#22D3EE")
         }
         private val nodeFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.FILL; color = Color.parseColor("#0F172A")
         }
         private val nodeStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE; strokeWidth = 5f; color = Color.parseColor("#38BDF8")
+            style = Paint.Style.STROKE; strokeWidth = 2.5f * d; color = Color.parseColor("#38BDF8")
         }
         private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#94A3B8"); textSize = 21f; textAlign = Paint.Align.CENTER
+            color = Color.parseColor("#94A3B8"); textSize = 10f * d; textAlign = Paint.Align.CENTER
         }
 
         @SuppressLint("ClickableViewAccessibility")
         override fun onTouchEvent(event: MotionEvent): Boolean {
-            // Jika dikunci, biarkan ScrollView luar menggulir layar dengan mulus!
             if (isLocked) return false
 
             parent?.requestDisallowInterceptTouchEvent(true)
-            val padX = 52f
+            val padX = 24f * d
             val usableW = width - padX * 2
             val stepX = usableW / 5f
-            val midY = height * 0.48f
-            val maxAmpY = height * 0.36f
+            val midY = height * 0.45f
+            val maxAmpY = height * 0.35f
 
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    var bestDist = 85f
+                    var bestDist = 36f * d
                     selectedBand = -1
                     for (i in 0..5) {
                         val nx = padX + i * stepX
@@ -838,15 +824,15 @@ class MainActivity : AppCompatActivity() {
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-            val padX = 52f
+            val padX = 24f * d
             val usableW = width - padX * 2
             val stepX = usableW / 5f
-            val midY = height * 0.48f
-            val maxAmpY = height * 0.36f
+            val midY = height * 0.45f
+            val maxAmpY = height * 0.35f
 
             for (i in 0..5) {
                 val x = padX + i * stepX
-                canvas.drawLine(x, 16f, x, height - 34f, gridPaint)
+                canvas.drawLine(x, 8f * d, x, height - 18f * d, gridPaint)
             }
             canvas.drawLine(padX, midY, width - padX, midY, zeroLinePaint)
 
@@ -867,11 +853,11 @@ class MainActivity : AppCompatActivity() {
 
             val freqLabels = arrayOf("65Hz", "150Hz", "380Hz", "2.2kHz", "5.5kHz", "10kHz")
             for (i in 0..5) {
-                val r = if (i == selectedBand) 18f else 13f
+                val r = if (i == selectedBand) 8f * d else 6f * d
                 nodeStrokePaint.color = if (isLocked) Color.parseColor("#94A3B8") else Color.parseColor("#38BDF8")
                 canvas.drawCircle(pts[i].x, pts[i].y, r, nodeFillPaint)
                 canvas.drawCircle(pts[i].x, pts[i].y, r, nodeStrokePaint)
-                canvas.drawText(freqLabels[i], pts[i].x, height - 8f, textPaint)
+                canvas.drawText(freqLabels[i], pts[i].x, height - 4f * d, textPaint)
             }
         }
     }
@@ -892,31 +878,32 @@ class MainActivity : AppCompatActivity() {
         private var currentVal = defaultVal
         private var lastY = 0f
         private val accentColor = Color.parseColor(accentHex)
+        private val d = context.resources.displayMetrics.density
 
         private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE; strokeWidth = 8f; strokeCap = Paint.Cap.ROUND
+            style = Paint.Style.STROKE; strokeWidth = 4f * d; strokeCap = Paint.Cap.ROUND
             color = Color.parseColor("#242D3D")
         }
         private val activePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE; strokeWidth = 8f; strokeCap = Paint.Cap.ROUND
+            style = Paint.Style.STROKE; strokeWidth = 4f * d; strokeCap = Paint.Cap.ROUND
             color = accentColor
         }
         private val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.FILL; color = Color.parseColor("#141A25")
         }
         private val rimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE; strokeWidth = 1.5f; color = Color.parseColor("#3B4861")
+            style = Paint.Style.STROKE; strokeWidth = 1f * d; color = Color.parseColor("#3B4861")
         }
         private val pointerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE; strokeWidth = 4f; strokeCap = Paint.Cap.ROUND
+            style = Paint.Style.STROKE; strokeWidth = 2.2f * d; strokeCap = Paint.Cap.ROUND
             color = accentColor
         }
         private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#94A3B8"); textSize = 16f
+            color = Color.parseColor("#94A3B8"); textSize = 8.5f * d
             textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD
         }
         private val valPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE; textSize = 18f
+            color = Color.WHITE; textSize = 10f * d
             textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD
         }
 
@@ -928,7 +915,6 @@ class MainActivity : AppCompatActivity() {
 
         @SuppressLint("ClickableViewAccessibility")
         override fun onTouchEvent(event: MotionEvent): Boolean {
-            // Jika dikunci, kembalikan false agar layar bisa di-scroll tanpa memutar knob
             if (isLocked) return false
 
             parent?.requestDisallowInterceptTouchEvent(true)
@@ -937,7 +923,7 @@ class MainActivity : AppCompatActivity() {
                 MotionEvent.ACTION_MOVE -> {
                     val dy = lastY - event.y
                     lastY = event.y
-                    setValue(currentVal + (dy / 200f) * (maxVal - minVal))
+                    setValue(currentVal + (dy / (90f * d)) * (maxVal - minVal))
                     return true
                 }
             }
@@ -947,8 +933,8 @@ class MainActivity : AppCompatActivity() {
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             val cx = width / 2f
-            val cy = height * 0.38f
-            val radius = min(width, height) * 0.22f
+            val cy = height * 0.36f
+            val radius = min(width, height) * 0.23f
             val arcRect = RectF(cx - radius, cy - radius, cx + radius, cy + radius)
 
             canvas.drawArc(arcRect, 135f, 270f, false, trackPaint)
@@ -968,8 +954,8 @@ class MainActivity : AppCompatActivity() {
 
             val formatted = if (minVal < 0 && currentVal > 0.4f) "+${currentVal.toInt()} $unit"
             else "${currentVal.toInt()} $unit"
-            canvas.drawText(formatted, cx, cy + radius + 25f, valPaint)
-            canvas.drawText(label, cx, cy + radius + 46f, labelPaint)
+            canvas.drawText(formatted, cx, cy + radius + 13f * d, valPaint)
+            canvas.drawText(label, cx, cy + radius + 24f * d, labelPaint)
         }
     }
 
@@ -978,6 +964,7 @@ class MainActivity : AppCompatActivity() {
         private var levelL = 0.05f
         private var levelR = 0.05f
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val d = context.resources.displayMetrics.density
 
         fun setStereoLevels(l: Float, r: Float) {
             levelL = l.coerceIn(0.04f, 1f)
@@ -988,14 +975,14 @@ class MainActivity : AppCompatActivity() {
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             val segments = 26
-            val gap = 4f
+            val gap = 2f * d
             val segW = (width - gap * (segments - 1)) / segments
-            val rowH = (height - 4f) / 2f
+            val rowH = (height - 2f * d) / 2f
 
             val levels = floatArrayOf(levelL, levelR)
             for (row in 0..1) {
                 val activeCount = (levels[row] * segments).toInt()
-                val top = row * (rowH + 4f)
+                val top = row * (rowH + 2f * d)
                 for (i in 0 until segments) {
                     val left = i * (segW + gap)
                     val isLit = i < activeCount
@@ -1004,7 +991,7 @@ class MainActivity : AppCompatActivity() {
                         i >= 17 -> if (isLit) Color.parseColor("#F59E0B") else Color.parseColor("#3B2E16")
                         else -> if (isLit) Color.parseColor("#10B981") else Color.parseColor("#14332B")
                     }
-                    canvas.drawRoundRect(left, top, left + segW, top + rowH, 3f, 3f, paint)
+                    canvas.drawRoundRect(left, top, left + segW, top + rowH, 1.5f * d, 1.5f * d, paint)
                 }
             }
         }
