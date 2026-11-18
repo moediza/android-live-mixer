@@ -65,7 +65,7 @@ class MainActivity : AppCompatActivity() {
     private var visualizer: Visualizer? = null
 
     private val defaultFreqs = floatArrayOf(65f, 150f, 380f, 2200f, 5500f, 10000f)
-    private val currentGains = floatArrayOf(0f, 0f, 0f, 0f, 0f, 0f)
+    private val currentGains = floatArrayOf(6.5f, 4.0f, -1.5f, -3.0f, 3.5f, 5.0f)
 
     private var toneBass = 0f
     private var toneMid = 0f
@@ -108,6 +108,9 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
+        // Muat sesi terakhir (kurva EQ, posisi knob Bass/Mid/Treble, dan status kunci)
+        restoreLastSessionState()
 
         setupAudioDspWithLimiter()
         setupSoundboard()
@@ -162,6 +165,7 @@ class MainActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(dp(64), dp(36))
             setOnClickListener {
                 saveCustomPreset()
+                saveLastSessionState()
                 Toast.makeText(context, "Preset EQ & Tone tersimpan ke CUSTOM!", Toast.LENGTH_SHORT).show()
             }
         }
@@ -224,7 +228,7 @@ class MainActivity : AppCompatActivity() {
         ytCard.addView(ytBar)
 
         ytWebView = WebView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(245))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(255))
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
@@ -240,33 +244,18 @@ class MainActivity : AppCompatActivity() {
         }
         ytCard.addView(ytWebView)
 
-        val requestNoteInput = EditText(this).apply {
-            hint = "📝 Catatan Request Lagu Penonton (ketik di sini)..."
-            setHintTextColor(Color.parseColor("#64748B"))
-            setTextColor(Color.parseColor("#F1F5F9"))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
-            background = makeRoundedBg("#0F172A", "#1E293B", dp(6).toFloat())
-            setPadding(dp(10), dp(8), dp(10), dp(8))
-            isSingleLine = true
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(6) }
-        }
-        ytCard.addView(requestNoteInput)
-
         btnResizeYt.setOnClickListener {
             ytSizeMode = (ytSizeMode + 1) % 3
             val lp = ytWebView.layoutParams
             when (ytSizeMode) {
                 0 -> {
                     ytWebView.visibility = View.VISIBLE
-                    lp.height = dp(245)
+                    lp.height = dp(255)
                     btnResizeYt.text = "PERBESAR / LIPAT"
                 }
                 1 -> {
                     ytWebView.visibility = View.VISIBLE
-                    lp.height = dp(370)
+                    lp.height = dp(385)
                     btnResizeYt.text = "LIPAT VIDEO"
                 }
                 2 -> {
@@ -346,22 +335,20 @@ class MainActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
 
-        btnLockTone = makeConsoleButton("🔓 UNLOCKED", "#1E293B", "#38BDF8", "#FFFFFF", 10f).apply {
+        btnLockTone = makeConsoleButton(
+            if (isToneLocked) "🔒 TERKUNCI" else "🔓 UNLOCKED",
+            if (isToneLocked) "#B91C1C" else "#1E293B",
+            if (isToneLocked) "#F87171" else "#38BDF8",
+            "#FFFFFF",
+            10f
+        ).apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(32))
             setOnClickListener {
                 isToneLocked = !isToneLocked
-                eqView.isLocked = isToneLocked
-                knobBass.isLocked = isToneLocked
-                knobMid.isLocked = isToneLocked
-                knobTreble.isLocked = isToneLocked
-
+                applyLockUiState()
+                saveLastSessionState()
                 if (isToneLocked) {
-                    text = "🔒 TERKUNCI"
-                    background = makeRoundedBg("#B91C1C", "#F87171", dp(8).toFloat())
                     Toast.makeText(context, "EQ & Knob dikunci aman saat scroll", Toast.LENGTH_SHORT).show()
-                } else {
-                    text = "🔓 UNLOCKED"
-                    background = makeRoundedBg("#1E293B", "#38BDF8", dp(8).toFloat())
                 }
             }
         }
@@ -371,6 +358,7 @@ class MainActivity : AppCompatActivity() {
         eqView = ParametricEqView(this, defaultFreqs, currentGains) { bandIdx, gainDb ->
             currentGains[bandIdx] = gainDb
             applySingleBandCalculated(bandIdx)
+            saveLastSessionState()
         }.apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(125))
         }
@@ -401,6 +389,7 @@ class MainActivity : AppCompatActivity() {
                     for (i in 0..5) currentGains[i] = target[i]
                     applyAllBands()
                     eqView.invalidate()
+                    saveLastSessionState()
                     Toast.makeText(context, "EQ Mode: $label", Toast.LENGTH_SHORT).show()
                 }
             }
@@ -429,17 +418,20 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER
         }
 
-        knobBass = RotaryKnobView(this, "MASTER BASS", -12f, 12f, 0f, "dB", "#F59E0B") { value ->
+        knobBass = RotaryKnobView(this, "MASTER BASS", -12f, 12f, toneBass, "dB", "#F59E0B") { value ->
             toneBass = value
             applyAllBands()
+            saveLastSessionState()
         }
-        knobMid = RotaryKnobView(this, "MASTER MID", -12f, 12f, 0f, "dB", "#10B981") { value ->
+        knobMid = RotaryKnobView(this, "MASTER MID", -12f, 12f, toneMid, "dB", "#10B981") { value ->
             toneMid = value
             applyAllBands()
+            saveLastSessionState()
         }
-        knobTreble = RotaryKnobView(this, "MASTER TREBLE", -12f, 12f, 0f, "dB", "#38BDF8") { value ->
+        knobTreble = RotaryKnobView(this, "MASTER TREBLE", -12f, 12f, toneTreble, "dB", "#38BDF8") { value ->
             toneTreble = value
             applyAllBands()
+            saveLastSessionState()
         }
 
         val knobLayout = LinearLayout.LayoutParams(0, dp(96), 1f)
@@ -514,12 +506,57 @@ class MainActivity : AppCompatActivity() {
         rootScroll.addView(root)
         setContentView(rootScroll)
 
-        val initPreset = presets[0].second
-        for (i in 0..5) currentGains[i] = initPreset[i]
+        // Terapkan seluruh setelan sesi terakhir yang dipulihkan
         applyAllBands()
-        eqView.invalidate()
+        applyLockUiState()
 
         ensureVisualizerPermissionAndStart()
+    }
+
+    private fun applyLockUiState() {
+        eqView.isLocked = isToneLocked
+        knobBass.isLocked = isToneLocked
+        knobMid.isLocked = isToneLocked
+        knobTreble.isLocked = isToneLocked
+
+        if (isToneLocked) {
+            btnLockTone.text = "🔒 TERKUNCI"
+            btnLockTone.background = makeRoundedBg("#B91C1C", "#F87171", dp(8).toFloat())
+        } else {
+            btnLockTone.text = "🔓 UNLOCKED"
+            btnLockTone.background = makeRoundedBg("#1E293B", "#38BDF8", dp(8).toFloat())
+        }
+        eqView.invalidate()
+        knobBass.invalidate()
+        knobMid.invalidate()
+        knobTreble.invalidate()
+    }
+
+    private fun saveLastSessionState() {
+        val prefs = getSharedPreferences("OhoMixerPrefs", Context.MODE_PRIVATE).edit()
+        for (i in 0..5) prefs.putFloat("last_band_$i", currentGains[i])
+        prefs.putFloat("last_tone_bass", toneBass)
+        prefs.putFloat("last_tone_mid", toneMid)
+        prefs.putFloat("last_tone_treble", toneTreble)
+        prefs.putBoolean("last_tone_locked", isToneLocked)
+        prefs.apply()
+    }
+
+    private fun restoreLastSessionState() {
+        val prefs = getSharedPreferences("OhoMixerPrefs", Context.MODE_PRIVATE)
+        val defaultDangdut = floatArrayOf(6.5f, 4.0f, -1.5f, -3.0f, 3.5f, 5.0f)
+        for (i in 0..5) {
+            currentGains[i] = prefs.getFloat("last_band_$i", defaultDangdut[i])
+        }
+        toneBass = prefs.getFloat("last_tone_bass", 0f)
+        toneMid = prefs.getFloat("last_tone_mid", 0f)
+        toneTreble = prefs.getFloat("last_tone_treble", 0f)
+        isToneLocked = prefs.getBoolean("last_tone_locked", false)
+    }
+
+    override fun onPause() {
+        saveLastSessionState()
+        super.onPause()
     }
 
     private fun ensureVisualizerPermissionAndStart() {
