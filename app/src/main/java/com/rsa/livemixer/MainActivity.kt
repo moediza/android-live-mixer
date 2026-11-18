@@ -22,6 +22,8 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -30,6 +32,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -109,7 +112,6 @@ class MainActivity : AppCompatActivity() {
 
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        // Muat sesi terakhir (kurva EQ, posisi knob Bass/Mid/Treble, dan status kunci)
         restoreLastSessionState()
 
         setupAudioDspWithLimiter()
@@ -194,7 +196,7 @@ class MainActivity : AppCompatActivity() {
         vuBarRow.addView(vuMeter)
         root.addView(vuBarRow)
 
-        // === 3. WIDESCREEN YOUTUBE KARAOKE PLAYER ===
+        // === 3. WIDESCREEN YOUTUBE KARAOKE PLAYER (AD-FREE SHIELD) ===
         val ytCard = createCardPanel().apply { setPadding(dp(8), dp(8), dp(8), dp(8)) }
         val ytBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -203,7 +205,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         ytBar.addView(TextView(this).apply {
-            text = "▶ YOUTUBE"
+            text = "▶ YOUTUBE (NO ADS)"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#F87171"))
@@ -233,7 +235,84 @@ class MainActivity : AppCompatActivity() {
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
             settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-            webViewClient = WebViewClient()
+
+            webViewClient = object : WebViewClient() {
+                private val adHosts = listOf(
+                    "doubleclick.net",
+                    "googlesyndication.com",
+                    "googleadservices.com",
+                    "adservice.google",
+                    "pagead2.googlesyndication.com",
+                    "ads.youtube.com"
+                )
+
+                override fun shouldInterceptRequest(
+                    view: WebView?,
+                    request: WebResourceRequest?
+                ): WebResourceResponse? {
+                    val url = request?.url?.toString()?.lowercase() ?: return super.shouldInterceptRequest(view, request)
+                    val isAdUrl = adHosts.any { url.contains(it) } ||
+                            url.contains("/pagead/") ||
+                            url.contains("/api/stats/ads") ||
+                            url.contains("/ptracking")
+                    return if (isAdUrl) {
+                        WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
+                    } else {
+                        super.shouldInterceptRequest(view, request)
+                    }
+                }
+
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    val adBlockJs = """
+                        (function() {
+                            if (window.__ohoAdShieldActive) return;
+                            window.__ohoAdShieldActive = true;
+                            let wasAd = false;
+                            let prevMuted = false;
+                            const selectors = [
+                                'ytm-promoted-sparkles-web-renderer',
+                                'ytm-companion-slot-renderer',
+                                'ad-slot-renderer',
+                                'ytm-statement-banner-renderer',
+                                '.ad-container',
+                                '.ytp-ad-overlay-container',
+                                '.ytp-ad-message-container'
+                            ];
+                            setInterval(function() {
+                                selectors.forEach(function(sel) {
+                                    document.querySelectorAll(sel).forEach(function(el) {
+                                        el.style.display = 'none';
+                                    });
+                                });
+                                const player = document.querySelector('.html5-video-player');
+                                const video = document.querySelector('video');
+                                const isAd = player && (
+                                    player.classList.contains('ad-showing') ||
+                                    player.classList.contains('ad-interrupting')
+                                );
+                                if (isAd && video) {
+                                    if (!wasAd) {
+                                        prevMuted = video.muted;
+                                        wasAd = true;
+                                    }
+                                    video.muted = true;
+                                    if (isFinite(video.duration) && video.duration > 0) {
+                                        video.currentTime = video.duration;
+                                    }
+                                    const skipBtn = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button');
+                                    if (skipBtn) skipBtn.click();
+                                } else if (!isAd && wasAd && video) {
+                                    video.muted = prevMuted;
+                                    wasAd = false;
+                                }
+                            }, 300);
+                        })();
+                    """.trimIndent()
+                    view?.evaluateJavascript(adBlockJs, null)
+                }
+            }
+
             webChromeClient = WebChromeClient()
             loadUrl("https://m.youtube.com")
 
@@ -364,7 +443,6 @@ class MainActivity : AppCompatActivity() {
         }
         eqCard.addView(eqView)
 
-        // Preset Cepat EQ
         val presetRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, dp(8), 0, dp(8))
@@ -397,7 +475,6 @@ class MainActivity : AppCompatActivity() {
         }
         eqCard.addView(presetRow)
 
-        // MASTER QUICK TONE KNOBS (BASS, MIDDLE, TREBLE)
         val toneContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = makeRoundedBg("#181F2F", "#1E293B", dp(10).toFloat())
@@ -506,7 +583,6 @@ class MainActivity : AppCompatActivity() {
         rootScroll.addView(root)
         setContentView(rootScroll)
 
-        // Terapkan seluruh setelan sesi terakhir yang dipulihkan
         applyAllBands()
         applyLockUiState()
 
