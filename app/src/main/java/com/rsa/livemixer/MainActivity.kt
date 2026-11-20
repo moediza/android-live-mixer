@@ -90,6 +90,7 @@ class MainActivity : AppCompatActivity() {
     private val timerHandler = Handler(Looper.getMainLooper())
 
     // Komponen UI
+    private lateinit var rootScroll: ScrollView
     private lateinit var tvLiveTimer: TextView
     private lateinit var btnTimerToggle: Button
     private lateinit var rtaView: RtaSpectrumView
@@ -100,6 +101,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnRouteMode: Button
 
     // Display Deck (YouTube + RTA dalam satu layar)
+    private lateinit var ytCard: LinearLayout
+    private lateinit var displayDeckContainer: LinearLayout
+    private lateinit var rtaOverlayFrame: FrameLayout
     private lateinit var ytWebView: WebView
     private lateinit var btnModeSplit: Button
     private lateinit var btnModeYtFull: Button
@@ -210,6 +214,8 @@ class MainActivity : AppCompatActivity() {
     private fun dp(value: Int): Int =
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value.toFloat(), resources.displayMetrics).toInt()
 
+    private fun screenHeightPx(): Int = resources.displayMetrics.heightPixels
+
     private fun makeConsoleButton(
         label: String,
         fillHex: String,
@@ -242,7 +248,7 @@ class MainActivity : AppCompatActivity() {
         setupAudioDspDlms()
         setupSoundboard16()
 
-        val rootScroll = ScrollView(this).apply {
+        rootScroll = ScrollView(this).apply {
             setBackgroundColor(Color.parseColor("#0A0D12"))
             isFillViewport = true
         }
@@ -485,7 +491,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(spacer(dp(6)))
 
         // === 3. SATU LAYAR TERPADU: YOUTUBE KARAOKE + GRAFIK RTA 24-BAND ===
-        val ytCard = createCardPanel().apply { setPadding(dp(7), dp(6), dp(7), dp(7)) }
+        ytCard = createCardPanel().apply { setPadding(dp(7), dp(6), dp(7), dp(7)) }
 
         // Baris Pemilih Tampilan (YT+RTA | YT FULL | RTA DSP | LIPAT) + Cari Lagu
         val deckHeaderRow = LinearLayout(this).apply {
@@ -528,9 +534,18 @@ class MainActivity : AppCompatActivity() {
         deckHeaderRow.addView(btnSearchYt)
         ytCard.addView(deckHeaderRow)
 
-        // Layar YouTube (No Ads)
+        // Wadah utama YouTube + RTA (YouTube SELALU VISIBLE agar musik tidak pernah berhenti saat pindah tab!)
+        displayDeckContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        rtaOverlayFrame = FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(220))
+        }
+
+        // Layar YouTube (No Ads & Anti-Auto-Pause)
         ytWebView = WebView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(175))
+            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
@@ -552,21 +567,33 @@ class MainActivity : AppCompatActivity() {
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
-                    val adBlockJs = """
+                    val adBlockAndUiJs = """
                         (function() {
                             if (window.__ohoAdShieldActive) return;
                             window.__ohoAdShieldActive = true;
                             let wasAd = false;
                             let prevMuted = false;
-                            const selectors = [
-                                'ytm-promoted-sparkles-web-renderer', 'ytm-companion-slot-renderer',
-                                'ad-slot-renderer', 'ytm-statement-banner-renderer',
-                                '.ad-container', '.ytp-ad-overlay-container', '.ytp-ad-message-container'
-                            ];
+
+                            // Paksa halaman selalu dianggap terlihat agar YouTube tidak auto-pause
+                            try {
+                                Object.defineProperty(document, 'hidden', { get: function() { return false; } });
+                                Object.defineProperty(document, 'visibilityState', { get: function() { return 'visible'; } });
+                            } catch (e) {}
+
+                            const style = document.createElement('style');
+                            style.innerHTML = `
+                                ytm-mobile-topbar-renderer.sticky-player,
+                                ytm-promoted-sparkles-web-renderer,
+                                ytm-companion-slot-renderer,
+                                ad-slot-renderer,
+                                ytm-statement-banner-renderer,
+                                .ad-container, .ytp-ad-overlay-container, .ytp-ad-message-container {
+                                    display: none !important;
+                                }
+                            `;
+                            document.head.appendChild(style);
+
                             setInterval(function() {
-                                selectors.forEach(function(sel) {
-                                    document.querySelectorAll(sel).forEach(function(el) { el.style.display = 'none'; });
-                                });
                                 const player = document.querySelector('.html5-video-player');
                                 const video = document.querySelector('video');
                                 const isAd = player && (player.classList.contains('ad-showing') || player.classList.contains('ad-interrupting'));
@@ -583,7 +610,7 @@ class MainActivity : AppCompatActivity() {
                             }, 300);
                         })();
                     """.trimIndent()
-                    view?.evaluateJavascript(adBlockJs, null)
+                    view?.evaluateJavascript(adBlockAndUiJs, null)
                     applyYoutubeVolume(if (isMasterMuted || isYtMuted) 0 else currentMusicVolume)
                     applyYoutubePitchSteps(pitchSteps)
                     applyYoutubeLoop(isYtLooping)
@@ -592,20 +619,31 @@ class MainActivity : AppCompatActivity() {
             webChromeClient = WebChromeClient()
             loadUrl("https://m.youtube.com")
 
-            setOnTouchListener { v, _ ->
-                v.parent.requestDisallowInterceptTouchEvent(true)
+            // Hanya tahan scroll induk saat disentuh di dalam layar video agar klik Play/Pause di layar 100% responsif
+            setOnTouchListener { v, event ->
+                if (event.action == MotionEvent.ACTION_DOWN || event.action == MotionEvent.ACTION_MOVE) {
+                    v.parent?.requestDisallowInterceptTouchEvent(true)
+                }
                 false
             }
         }
-        ytCard.addView(ytWebView)
+        rtaOverlayFrame.addView(ytWebView)
 
-        // Grafik RTA 24-Band Real-Time Spectrum Analyzer (Menyatu dalam satu layar dengan YouTube)
+        // Grafik RTA 24-Band Real-Time Spectrum Analyzer
         rtaView = RtaSpectrumView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(64)).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(68)).apply {
                 topMargin = dp(4)
             }
+            setOnClickListener {
+                // Ketuk grafik RTA untuk kalibrasi ulang sensor visualizer
+                ensureVisualizerPermissionAndStart()
+                Toast.makeText(context, "Sensor RTA 24-Band disegarkan", Toast.LENGTH_SHORT).show()
+            }
         }
-        ytCard.addView(rtaView)
+
+        displayDeckContainer.addView(rtaOverlayFrame)
+        displayDeckContainer.addView(rtaView)
+        ytCard.addView(displayDeckContainer)
 
         // Baris Kendali YouTube 1: -10s | PLAY/PAUSE | +10s | MUTE YT
         val ytTransportRow1 = LinearLayout(this).apply {
@@ -621,6 +659,7 @@ class MainActivity : AppCompatActivity() {
         val btnPlayPause = makeConsoleButton("⏯ PLAY/PAUSE", "#0F172A", "#38BDF8", "#38BDF8", 9f).apply {
             layoutParams = LinearLayout.LayoutParams(0, dp(30), 1.3f).apply { marginEnd = dp(4) }
             setOnClickListener {
+                ensureVisualizerPermissionAndStart()
                 ytWebView.evaluateJavascript("var v=document.querySelector('video'); if(v){ if(v.paused) v.play(); else v.pause(); }", null)
             }
         }
@@ -1411,7 +1450,7 @@ class MainActivity : AppCompatActivity() {
         ensureVisualizerPermissionAndStart()
     }
 
-    // === PENGATUR MODE LAYAR YOUTUBE & RTA 24-BAND ===
+    // === PENGATUR MODE LAYAR YOUTUBE & RTA 24-BAND (MUSIK TETAP HIDUP DI SEMUA TAB) ===
     private fun setDisplayDeckMode(mode: Int) {
         displayDeckMode = mode
         val btns = arrayOf(btnModeSplit, btnModeYtFull, btnModeRtaFull, btnModeFold)
@@ -1425,35 +1464,60 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        val ytLp = ytWebView.layoutParams
-        val rtaLp = rtaView.layoutParams
+        // Lepas rtaView dari parent lamanya sebelum memindah posisi
+        (rtaView.parent as? android.view.ViewGroup)?.removeView(rtaView)
+
+        val frameLp = rtaOverlayFrame.layoutParams
+        val sh = screenHeightPx()
 
         when (mode) {
-            0 -> { // YT + RTA (Keduanya tampil bersamaan dalam satu layar)
+            0 -> { // YT + RTA (Keduanya tampil bersamaan & video pas layar)
                 ytWebView.visibility = View.VISIBLE
-                ytLp.height = dp(175)
+                frameLp.height = dp(220)
+                rtaOverlayFrame.layoutParams = frameLp
+
                 rtaView.visibility = View.VISIBLE
-                rtaLp.height = dp(64)
+                rtaView.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(68)).apply {
+                    topMargin = dp(4)
+                }
+                displayDeckContainer.addView(rtaView)
             }
-            1 -> { // YT FULL (Fokus lirik karaoke besar)
+            1 -> { // YT FULL (Layar penuh ~75% tinggi layar HP untuk lirik karaoke maksimal)
                 ytWebView.visibility = View.VISIBLE
-                ytLp.height = dp(310)
+                frameLp.height = (sh * 0.72f).toInt().coerceAtLeast(dp(440))
+                rtaOverlayFrame.layoutParams = frameLp
+
                 rtaView.visibility = View.GONE
+                rootScroll.post { rootScroll.smoothScrollTo(0, ytCard.top) }
             }
-            2 -> { // RTA DSP FULL (Fokus Grafik RTA 24-Band besar, audio YT tetap jalan)
-                ytWebView.visibility = View.INVISIBLE
-                ytLp.height = dp(1)
+            2 -> { // RTA DSP FULL (RTA menimpa di atas ytWebView agar YouTube tetap VISIBLE & musik hidup!)
+                ytWebView.visibility = View.VISIBLE
+                frameLp.height = dp(235)
+                rtaOverlayFrame.layoutParams = frameLp
+
                 rtaView.visibility = View.VISIBLE
-                rtaLp.height = dp(215)
+                rtaView.layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+                rtaOverlayFrame.addView(rtaView)
+                rtaView.bringToFront()
+                ensureVisualizerPermissionAndStart()
             }
-            3 -> { // LIPAT (Hemat ruang, audio YT tetap jalan)
-                ytWebView.visibility = View.INVISIBLE
-                ytLp.height = dp(1)
-                rtaView.visibility = View.GONE
+            3 -> { // LIPAT (Bingkai diperkecil tetapi ytWebView tetap VISIBLE agar audio terus berputar)
+                ytWebView.visibility = View.VISIBLE
+                frameLp.height = dp(62)
+                rtaOverlayFrame.layoutParams = frameLp
+
+                rtaView.visibility = View.VISIBLE
+                rtaView.layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+                rtaOverlayFrame.addView(rtaView)
+                rtaView.bringToFront()
             }
         }
-        ytWebView.layoutParams = ytLp
-        rtaView.layoutParams = rtaLp
     }
 
     // === NAVIGASI 4 TAB DLMS ===
@@ -2020,6 +2084,11 @@ class MainActivity : AppCompatActivity() {
         bgmVolume = prefs.getInt("last_bgm_vol", 45)
     }
 
+    override fun onResume() {
+        super.onResume()
+        ensureVisualizerPermissionAndStart()
+    }
+
     override fun onPause() {
         saveLastSessionState()
         super.onPause()
@@ -2042,17 +2111,23 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupVisualizer() {
         try {
+            visualizer?.enabled = false
             visualizer?.release()
             val maxCap = Visualizer.getCaptureSizeRange()[1]
             visualizer = Visualizer(0).apply {
                 captureSize = min(512, maxCap)
                 setDataCaptureListener(object : Visualizer.OnDataCaptureListener {
-                    override fun onWaveFormDataCapture(v: Visualizer?, waveform: ByteArray?, rate: Int) {}
-                    override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, rate: Int) {
-                        if (fft == null || fft.size < 4) return
-                        rtaView.updateFftData(fft)
+                    override fun onWaveFormDataCapture(v: Visualizer?, waveform: ByteArray?, rate: Int) {
+                        if (waveform != null && waveform.isNotEmpty()) {
+                            rtaView.updateWaveformFallback(waveform)
+                        }
                     }
-                }, Visualizer.getMaxCaptureRate(), false, true)
+                    override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, rate: Int) {
+                        if (fft != null && fft.size >= 4) {
+                            rtaView.updateFftData(fft)
+                        }
+                    }
+                }, Visualizer.getMaxCaptureRate(), true, true)
                 enabled = true
             }
         } catch (e: Exception) {
@@ -2093,11 +2168,12 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
-    // === 24-BAND REAL-TIME SPECTRUM ANALYZER (RTA GAYA EQUATUBE DSP) ===
+    // === 24-BAND REAL-TIME SPECTRUM ANALYZER (SENSITIVITAS TINGGI + FALLBACK) ===
     class RtaSpectrumView(context: Context) : View(context) {
         private val numBands = 24
-        private val barLevels = FloatArray(numBands) { 0.05f }
-        private val peakLevels = FloatArray(numBands) { 0.08f }
+        private val barLevels = FloatArray(numBands) { 0.06f }
+        private val peakLevels = FloatArray(numBands) { 0.09f }
+        private var lastFftTimestamp = 0L
         private val d = context.resources.displayMetrics.density
 
         private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -2116,6 +2192,7 @@ class MainActivity : AppCompatActivity() {
 
         fun updateFftData(fft: ByteArray) {
             val n = fft.size / 2
+            var totalEnergy = 0f
             for (b in 0 until numBands) {
                 val startBin = (2.0.pow((b.toDouble() / numBands) * ln(max(4, n - 2).toDouble()) / ln(2.0))).toInt().coerceIn(1, n - 1)
                 val endBin = (2.0.pow(((b + 1).toDouble() / numBands) * ln(max(4, n - 2).toDouble()) / ln(2.0))).toInt().coerceIn(startBin, n - 1)
@@ -2126,12 +2203,41 @@ class MainActivity : AppCompatActivity() {
                     val mag = hypot(re, im)
                     if (mag > maxMag) maxMag = mag
                 }
-                val norm = (ln(1f + maxMag) / 5.2f).coerceIn(0.04f, 1.0f)
-                barLevels[b] = max(norm, barLevels[b] * 0.78f)
+                totalEnergy += maxMag
+                // Sensitivitas tinggi agar gerakan spektrum selalu hidup meski volume YouTube dikecilkan
+                val norm = (ln(1f + maxMag * 5.5f) / 3.9f).coerceIn(0.05f, 1.0f)
+                barLevels[b] = max(norm, barLevels[b] * 0.76f)
                 if (barLevels[b] >= peakLevels[b]) {
                     peakLevels[b] = barLevels[b]
                 } else {
-                    peakLevels[b] = max(barLevels[b], peakLevels[b] - 0.018f)
+                    peakLevels[b] = max(barLevels[b], peakLevels[b] - 0.016f)
+                }
+            }
+            if (totalEnergy > 1f) {
+                lastFftTimestamp = SystemClock.elapsedRealtime()
+            }
+            postInvalidate()
+        }
+
+        // Cadangan otomatis jika chip audio HP tertentu hanya mengirim waveform
+        fun updateWaveformFallback(waveform: ByteArray) {
+            if (SystemClock.elapsedRealtime() - lastFftTimestamp < 400L) return
+            val step = max(1, waveform.size / numBands)
+            for (b in 0 until numBands) {
+                var sum = 0f
+                val offset = b * step
+                for (j in 0 until step) {
+                    if (offset + j < waveform.size) {
+                        sum += abs(((waveform[offset + j].toInt() and 0xFF) - 128) / 128f)
+                    }
+                }
+                val avg = (sum / step) * 3.8f
+                val shaped = (avg * (1.15f - (b.toFloat() / numBands) * 0.45f)).coerceIn(0.05f, 1.0f)
+                barLevels[b] = max(shaped, barLevels[b] * 0.76f)
+                if (barLevels[b] >= peakLevels[b]) {
+                    peakLevels[b] = barLevels[b]
+                } else {
+                    peakLevels[b] = max(barLevels[b], peakLevels[b] - 0.016f)
                 }
             }
             postInvalidate()
