@@ -25,7 +25,6 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
-import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -57,8 +56,8 @@ class MainActivity : AppCompatActivity() {
     private var isSubBassActive = false
     private var isClarityActive = false
     private var isReverbActive = false
-    private var displayDeckMode = 0 // 0 = YT + RTA, 1 = YT FULL, 2 = RTA DSP, 3 = LIPAT
-    private var channelRouteMode = 0 // 0 = STEREO, 1 = MONO, 2 = L ONLY, 3 = R ONLY
+    private var displayDeckMode = 0 // 0 = YOUTUBE FULL, 1 = RTA DSP
+    private var channelRouteMode = 0 // 0 = STEREO L+R, 1 = MONO L+R, 2 = KIRI L ONLY, 3 = KANAN R ONLY
     private var activeDlmsTab = 0 // 0 = EQUALIZER, 1 = DYNAMIC, 2 = CROSSOVER, 3 = TONE & EFEK
     private var currentBank = 0
 
@@ -69,7 +68,7 @@ class MainActivity : AppCompatActivity() {
     private var currentMusicVolume = 85
     private var sfxVolume = 100
     private var bgmVolume = 45
-    private var pitchSteps = 0 // Rentang -5 s/d +5
+    private var pitchSteps = 0 // Rentang -5 s/d +5 (Tempo tetap 1.0x original)
 
     // Parameter Dynamic 5-Band (SUB, LOW, MID, HIGH, AIR)
     private var selectedDynBand = 0
@@ -94,6 +93,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var rootScroll: ScrollView
     private lateinit var tvLiveTimer: TextView
     private lateinit var btnTimerToggle: Button
+    private lateinit var vuMeterView: StereoLedVuView
     private lateinit var rtaView: RtaSpectrumView
     private lateinit var seekBoostL: SeekBar
     private lateinit var seekBoostR: SeekBar
@@ -101,15 +101,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvBoostRVal: TextView
     private lateinit var btnRouteMode: Button
 
-    // Display Deck (Layar Terpadu YouTube + RTA + Mode Lipat)
+    // Display Deck (YOUTUBE FULL & RTA DSP)
     private lateinit var ytCard: LinearLayout
     private lateinit var deckStageFrame: FrameLayout
     private lateinit var ytWebView: WebView
-    private lateinit var lipatCoverBanner: TextView
-    private lateinit var btnModeSplit: Button
     private lateinit var btnModeYtFull: Button
-    private lateinit var btnModeRtaFull: Button
-    private lateinit var btnModeFold: Button
+    private lateinit var btnModeRtaDsp: Button
 
     private lateinit var eqView: GraphicEq10BandView
     private lateinit var dynView: Dynamic5BandView
@@ -259,7 +256,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(9), dp(8), dp(9), dp(14))
         }
 
-        // === 1. BARIS HEADER & LIVE TIMER ===
+        // === 1. BARIS HEADER & PENGHITUNG DURASI SIARAN (LIVE TIMER) ===
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -358,8 +355,7 @@ class MainActivity : AppCompatActivity() {
                     setTextColor(Color.WHITE)
                 } else {
                     applyYoutubeVolume(if (isYtMuted) 0 else currentMusicVolume)
-                    val bVol = bgmVolume / 100f
-                    bgmPlayer?.setVolume(bVol, bVol)
+                    updateBgmPanAndVolume()
                     text = "MUTE"
                     background = makeRoundedBg("#1E293B", "#F59E0B", dp(7).toFloat())
                     setTextColor(Color.parseColor("#FBBF24"))
@@ -391,17 +387,25 @@ class MainActivity : AppCompatActivity() {
         header.addView(btnExit)
         root.addView(header)
 
-        // === 2. MASTER OUTPUT L & R + SAKELAR 4-MODE KANAL ===
-        val lrCard = createCardPanel().apply { setPadding(dp(8), dp(5), dp(8), dp(5)) }
+        // === 2. PANEL MASTER OUTPUT L & R + STEREO LED VU METER + SAKELAR 4-MODE KANAL ===
+        val lrCard = createCardPanel().apply { setPadding(dp(8), dp(6), dp(8), dp(6)) }
         val lrRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
 
-        val lrSlidersCol = LinearLayout(this).apply {
+        val lrLeftCol = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
+
+        // Batang Lampu LED VU Meter Stereo (L & R)
+        vuMeterView = StereoLedVuView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(22)).apply {
+                bottomMargin = dp(4)
+            }
+        }
+        lrLeftCol.addView(vuMeterView)
 
         val rowL = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -473,25 +477,26 @@ class MainActivity : AppCompatActivity() {
         rowR.addView(seekBoostR)
         rowR.addView(tvBoostRVal)
 
-        lrSlidersCol.addView(rowL)
-        lrSlidersCol.addView(rowR)
+        lrLeftCol.addView(rowL)
+        lrLeftCol.addView(rowR)
 
         btnRouteMode = makeConsoleButton("STEREO\nL + R", "#0F172A", "#22D3EE", "#22D3EE", 8.5f).apply {
             maxLines = 2
-            layoutParams = LinearLayout.LayoutParams(dp(60), dp(40)).apply { marginStart = dp(6) }
+            layoutParams = LinearLayout.LayoutParams(dp(64), dp(58)).apply { marginStart = dp(6) }
             setOnClickListener {
                 channelRouteMode = (channelRouteMode + 1) % 4
                 updateChannelRouteUiAndApply()
+                saveLastSessionState()
             }
         }
 
-        lrRow.addView(lrSlidersCol)
+        lrRow.addView(lrLeftCol)
         lrRow.addView(btnRouteMode)
         lrCard.addView(lrRow)
         root.addView(lrCard)
         root.addView(spacer(dp(6)))
 
-        // === 3. LAYAR TERPADU YOUTUBE KARAOKE (ANTI-IKLAN) + GRAFIK RTA 24-BAND ===
+        // === 3. LAYAR UTAMA TERPADU: YOUTUBE FULL & RTA DSP (3 TOMBOL RINGKAS) ===
         ytCard = createCardPanel().apply { setPadding(dp(7), dp(6), dp(7), dp(7)) }
 
         val deckHeaderRow = LinearLayout(this).apply {
@@ -500,48 +505,38 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, 0, 0, dp(5))
         }
 
-        btnModeSplit = makeConsoleButton("YT+RTA", "#0284C7", "#38BDF8", "#FFFFFF", 8.5f).apply {
-            layoutParams = LinearLayout.LayoutParams(0, dp(26), 1.05f).apply { marginEnd = dp(3) }
+        btnModeYtFull = makeConsoleButton("YOUTUBE FULL", "#0284C7", "#38BDF8", "#FFFFFF", 9f).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(28), 1.2f).apply { marginEnd = dp(4) }
             setOnClickListener { setDisplayDeckMode(0) }
         }
-        btnModeYtFull = makeConsoleButton("YT FULL", "#1E293B", "#475569", "#CBD5E1", 8.5f).apply {
-            layoutParams = LinearLayout.LayoutParams(0, dp(26), 1f).apply { marginEnd = dp(3) }
+        btnModeRtaDsp = makeConsoleButton("RTA DSP", "#1E293B", "#475569", "#CBD5E1", 9f).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(28), 1f).apply { marginEnd = dp(4) }
             setOnClickListener { setDisplayDeckMode(1) }
         }
-        btnModeRtaFull = makeConsoleButton("RTA DSP", "#1E293B", "#475569", "#CBD5E1", 8.5f).apply {
-            layoutParams = LinearLayout.LayoutParams(0, dp(26), 1f).apply { marginEnd = dp(3) }
-            setOnClickListener { setDisplayDeckMode(2) }
-        }
-        btnModeFold = makeConsoleButton("LIPAT", "#1E293B", "#475569", "#94A3B8", 8.5f).apply {
-            layoutParams = LinearLayout.LayoutParams(0, dp(26), 0.8f).apply { marginEnd = dp(4) }
-            setOnClickListener { setDisplayDeckMode(3) }
-        }
-
-        val btnSearchYt = makeConsoleButton("🔍 CARI", "#DC2626", "#F87171", "#FFFFFF", 8.5f).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(56), dp(26))
+        val btnSearchYt = makeConsoleButton("🔍 CARI LAGU", "#DC2626", "#F87171", "#FFFFFF", 9f).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(28), 1f)
             setOnClickListener {
-                if (displayDeckMode == 2 || displayDeckMode == 3) {
-                    setDisplayDeckMode(0)
-                }
+                if (displayDeckMode != 0) setDisplayDeckMode(0)
                 ytWebView.loadUrl("https://m.youtube.com/results?search_query=karaoke+dangdut+campursari+lirik")
             }
         }
 
-        deckHeaderRow.addView(btnModeSplit)
         deckHeaderRow.addView(btnModeYtFull)
-        deckHeaderRow.addView(btnModeRtaFull)
-        deckHeaderRow.addView(btnModeFold)
+        deckHeaderRow.addView(btnModeRtaDsp)
         deckHeaderRow.addView(btnSearchYt)
         ytCard.addView(deckHeaderRow)
 
-        // Wadah Berlapis (FrameLayout) agar ytWebView selalu berukuran penuh di lapisan bawah (anti auto-pause!)
+        val stageHeight = (screenHeightPx() * 0.34f).toInt().coerceIn(dp(220), dp(265))
         deckStageFrame = FrameLayout(this).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(264))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, stageHeight)
         }
 
-        // Lapisan Bawah: Layar YouTube (Anti-Iklan Sejak Awal Halaman & Tanpa Penyadapan Audio CORS)
+        // Lapisan Video YouTube Full (Anti-Iklan Sejak Awal + Pitch Shifter Tempo Tetap)
         ytWebView = WebView(this).apply {
-            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, dp(196))
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
             isFocusable = true
             isFocusableInTouchMode = true
             settings.javaScriptEnabled = true
@@ -569,22 +564,21 @@ class MainActivity : AppCompatActivity() {
 
                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                     super.onPageStarted(view, url, favicon)
-                    injectEarlyAdAndPlaybackShield(view)
+                    injectEarlyCoreEngine(view)
                 }
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
-                    injectEarlyAdAndPlaybackShield(view)
+                    injectEarlyCoreEngine(view)
                     applyYoutubeVolume(if (isMasterMuted || isYtMuted) 0 else currentMusicVolume)
-                    applyYoutubePitchSteps(pitchSteps)
+                    applyYoutubePitchStepsFixedTempo(pitchSteps)
+                    applyYoutubeChannelMatrix(channelRouteMode)
                     applyYoutubeLoop(isYtLooping)
-                    applyYoutubeFullVideoCss(displayDeckMode == 1)
                 }
             }
             webChromeClient = WebChromeClient()
             loadUrl("https://m.youtube.com")
 
-            // Sentuhan langsung di layar video diteruskan sepenuhnya ke pemutar YouTube
             setOnTouchListener { v, event ->
                 v.requestFocus()
                 if (event.action == MotionEvent.ACTION_MOVE) {
@@ -595,34 +589,19 @@ class MainActivity : AppCompatActivity() {
         }
         deckStageFrame.addView(ytWebView)
 
-        // Lapisan Grafik RTA 24-Band Real-Time Spectrum Analyzer
+        // Lapisan Grafik RTA 24-Band (Semi-transparan tipis di atas video agar Chromium tidak menghentikan musik!)
         rtaView = RtaSpectrumView(this).apply {
-            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, dp(64)).apply {
-                gravity = Gravity.BOTTOM
-            }
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            visibility = View.GONE
             setOnClickListener {
                 ensureVisualizerPermissionAndStart()
                 Toast.makeText(context, "Sensor RTA 24-Band disegarkan", Toast.LENGTH_SHORT).show()
             }
         }
         deckStageFrame.addView(rtaView)
-
-        // Lapisan Penutup Mode LIPAT (Menutup 100% tampilan YouTube saat LIPAT dipilih, musik tetap hidup)
-        lipatCoverBanner = TextView(this).apply {
-            text = "🎵 AUDIO YOUTUBE BERJALAN — MODE LIPAT (KETUK YT+RTA UNTUK BUKA)"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.parseColor("#38BDF8"))
-            gravity = Gravity.CENTER
-            background = makeRoundedBg("#0E1522", "#38BDF8", dp(7).toFloat())
-            visibility = View.GONE
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-            setOnClickListener { setDisplayDeckMode(0) }
-        }
-        deckStageFrame.addView(lipatCoverBanner)
 
         ytCard.addView(deckStageFrame)
 
@@ -689,7 +668,7 @@ class MainActivity : AppCompatActivity() {
         ytTransportRow1.addView(btnMuteYt)
         ytCard.addView(ytTransportRow1)
 
-        // Baris Kendali YouTube 2: KEY - | NADA: 0 (-5 s/d +5) | KEY + | LOOP
+        // Baris Kendali YouTube 2: KEY - | NADA: 0 (-5 s/d +5, Tempo Tetap Original) | KEY + | LOOP
         val ytTransportRow2 = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
         }
@@ -702,7 +681,7 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener {
                 pitchSteps = 0
                 updatePitchUiAndApply()
-                Toast.makeText(context, "Nada dikembalikan ke asli (0)", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Nada dikembalikan ke asli (0) — Tempo Original", Toast.LENGTH_SHORT).show()
             }
         }
         val btnKeyUp = makeConsoleButton("♯ KEY +", "#1E293B", "#A855F7", "#E9D5FF", 9f).apply {
@@ -732,7 +711,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(ytCard)
         root.addView(spacer(dp(6)))
 
-        // === 4. DUAL VOLUME FADER (MUSIC & SFX + SMART DUCKING) ===
+        // === 4. PANEL DUAL VOLUME FADER & SMART DUCKING ===
         val volCard = createCardPanel().apply { setPadding(dp(8), dp(6), dp(8), dp(6)) }
 
         val musicVolRow = LinearLayout(this).apply {
@@ -838,7 +817,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(volCard)
         root.addView(spacer(dp(6)))
 
-        // === 5. DLMS 4-TAB ENGINE (EQUALIZER | DYNAMIC | CROSSOVER | TONE & EFEK) ===
+        // === 5. KONSOL MANAJEMEN SUARA DLMS 4-TAB ===
         val dlmsMainCard = createCardPanel().apply { setPadding(dp(8), dp(7), dp(8), dp(8)) }
 
         val tabBar = LinearLayout(this).apply {
@@ -1300,7 +1279,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(dlmsMainCard)
         root.addView(spacer(dp(6)))
 
-        // === 6. SOUNDBOARD BANK A / BANK B (16 SLOT + EDIT NAMA & MP3) ===
+        // === 6. PAPAN SOUNDBOARD 16 SLOT (BANK A & BANK B) ===
         val sbdCard = createCardPanel().apply { setPadding(dp(7), dp(7), dp(7), dp(7)) }
         val sbdHeader = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -1361,7 +1340,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(sbdCard)
         root.addView(spacer(dp(6)))
 
-        // === 7. BGM NGOBROL AUTO-LOOP PLAYER ===
+        // === 7. PEMUTAR BGM NGOBROL AUTO-LOOP ===
         val bgmCard = createCardPanel().apply { setPadding(dp(8), dp(6), dp(8), dp(6)) }
         val bgmTopRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -1435,7 +1414,7 @@ class MainActivity : AppCompatActivity() {
         // Inisialisasi Semua Mesin DSP & Tampilan
         lockHardwareMediaVolumeMax()
         setDisplayDeckMode(0)
-        applyChannelBoostAndRouting()
+        updateChannelRouteUiAndApply(showToast = false)
         applyAllBands10()
         applyMultiBandDynamics5()
         applyOutputLimiterSettings()
@@ -1447,20 +1426,20 @@ class MainActivity : AppCompatActivity() {
         ensureVisualizerPermissionAndStart()
     }
 
-    // === PENYARING ANTI-IKLAN SEJAK AWAL HALAMAN & ANTI AUTO-PAUSE ===
-    private fun injectEarlyAdAndPlaybackShield(view: WebView?) {
+    // === ENGINE INTI YOUTUBE: ANTI-IKLAN + FULL VIDEO BOX + PITCH SHIFTER TEMPO TETAP + MONO/STEREO MATRIX ===
+    private fun injectEarlyCoreEngine(view: WebView?) {
         val js = """
             (function() {
-                if (!window.__ohoShieldV63) {
-                    window.__ohoShieldV63 = true;
+                if (!window.__ohoEngineV7) {
+                    window.__ohoEngineV7 = true;
 
-                    // 1. Paksa halaman selalu dianggap terlihat agar YouTube tidak auto-pause
+                    // 1. Paksa halaman selalu terlihat agar YouTube tidak auto-pause
                     try {
                         Object.defineProperty(document, 'hidden', { get: function() { return false; } });
                         Object.defineProperty(document, 'visibilityState', { get: function() { return 'visible'; } });
                     } catch (e) {}
 
-                    // 2. Bersihkan objek awal ytInitialPlayerResponse sebelum diputar
+                    // 2. Hapus data iklan sejak awal respon YouTube
                     function stripAdKeys(obj) {
                         if (!obj || typeof obj !== 'object') return obj;
                         delete obj.adPlacements;
@@ -1479,7 +1458,6 @@ class MainActivity : AppCompatActivity() {
                         });
                     } catch (e) {}
 
-                    // 3. Saring JSON API YouTube (fetch & XHR)
                     const origFetch = window.fetch;
                     window.fetch = async function(...args) {
                         const res = await origFetch.apply(this, args);
@@ -1517,7 +1495,7 @@ class MainActivity : AppCompatActivity() {
                         return origXhrSend.apply(this, arguments);
                     };
 
-                    // 4. CSS Penyembunyi Banner Iklan & Mode Layar Penuh Video (YT FULL)
+                    // 3. CSS: Sembunyikan iklan & buat video memenuhi penuh bingkai layar saat menonton (/watch)
                     const style = document.createElement('style');
                     style.innerHTML = `
                         ytm-promoted-sparkles-web-renderer,
@@ -1529,35 +1507,212 @@ class MainActivity : AppCompatActivity() {
                         .ad-container, .ytp-ad-overlay-container, .ytp-ad-message-container {
                             display: none !important;
                         }
-                        html.oho-yt-full body {
+                        html.oho-watch-full body {
                             overflow: hidden !important;
                             background: #000 !important;
                         }
-                        html.oho-yt-full ytm-mobile-topbar-renderer,
-                        html.oho-yt-full ytm-item-section-renderer,
-                        html.oho-yt-full ytm-single-column-watch-next-results-renderer > :not(#player-container-id) {
+                        html.oho-watch-full ytm-mobile-topbar-renderer,
+                        html.oho-watch-full ytm-single-column-watch-next-results-renderer,
+                        html.oho-watch-full .related-chips-slot-wrapper,
+                        html.oho-watch-full ytm-item-section-renderer {
                             display: none !important;
                         }
-                        html.oho-yt-full #player-container-id,
-                        html.oho-yt-full .player-container,
-                        html.oho-yt-full .html5-video-player,
-                        html.oho-yt-full video {
+                        html.oho-watch-full #player-container-id,
+                        html.oho-watch-full .player-container,
+                        html.oho-watch-full #movie_player,
+                        html.oho-watch-full .html5-video-player,
+                        html.oho-watch-full .html5-video-container,
+                        html.oho-watch-full video {
                             position: fixed !important;
                             top: 0 !important;
                             left: 0 !important;
                             width: 100vw !important;
                             height: 100vh !important;
+                            max-width: 100vw !important;
                             max-height: 100vh !important;
+                            margin: 0 !important;
+                            padding: 0 !important;
+                            object-fit: cover !important;
                             z-index: 9999 !important;
                             background: #000 !important;
                         }
                     `;
                     (document.head || document.documentElement).appendChild(style);
 
-                    // 5. Penjaga Auto-Skip Iklan & Anti-Auto-Pause saat pindah tab tampilan
+                    // 4. Granular Real-Time Pitch Shifter (Tempo Tetap 1.0x Original!) + Channel Matrix (Stereo/Mono/L/R)
+                    window.__ohoPitchSteps = 0;
+                    window.__ohoRouteMode = 0;
+
+                    function createGranularPitchNode(ctx) {
+                        const bufferTime = 0.08;
+                        const fadeTime = 0.02;
+                        const delayA = ctx.createDelay(0.5);
+                        const delayB = ctx.createDelay(0.5);
+                        const gainA = ctx.createGain();
+                        const gainB = ctx.createGain();
+                        const inputNode = ctx.createGain();
+                        const outputNode = ctx.createGain();
+
+                        inputNode.connect(delayA);
+                        inputNode.connect(delayB);
+                        delayA.connect(gainA);
+                        delayB.connect(gainB);
+                        gainA.connect(outputNode);
+                        gainB.connect(outputNode);
+
+                        const sr = ctx.sampleRate;
+                        const len = Math.floor(sr * 2);
+                        const curveA = new Float32Array(len);
+                        const curveB = new Float32Array(len);
+                        const winA = new Float32Array(len);
+                        const winB = new Float32Array(len);
+
+                        for (let i = 0; i < len; i++) {
+                            const pA = (i / len);
+                            const pB = (pA + 0.5) % 1.0;
+                            curveA[i] = pA * bufferTime;
+                            curveB[i] = pB * bufferTime;
+                            winA[i] = sinWindow(pA);
+                            winB[i] = sinWindow(pB);
+                        }
+                        function sinWindow(p) {
+                            return Math.sin(Math.PI * p);
+                        }
+
+                        const lfo = ctx.createBufferSource();
+                        const lfoBuf = ctx.createBuffer(4, len, sr);
+                        lfoBuf.copyToChannel(curveA, 0);
+                        lfoBuf.copyToChannel(curveB, 1);
+                        lfoBuf.copyToChannel(winA, 2);
+                        lfoBuf.copyToChannel(winB, 3);
+                        lfo.buffer = lfoBuf;
+                        lfo.loop = true;
+
+                        const splitLfo = ctx.createChannelSplitter(4);
+                        lfo.connect(splitLfo);
+
+                        const depthA = ctx.createGain();
+                        const depthB = ctx.createGain();
+                        splitLfo.connect(depthA, 0);
+                        splitLfo.connect(depthB, 1);
+                        depthA.connect(delayA.delayTime);
+                        depthB.connect(delayB.delayTime);
+
+                        gainA.gain.value = 0;
+                        gainB.gain.value = 0;
+                        splitLfo.connect(gainA.gain, 2);
+                        splitLfo.connect(gainB.gain, 3);
+
+                        lfo.start(0);
+
+                        return {
+                            input: inputNode,
+                            output: outputNode,
+                            setSemitones: function(st) {
+                                const ratio = Math.pow(2, st / 12);
+                                const freq = Math.abs(1 - ratio) / bufferTime;
+                                lfo.playbackRate.value = Math.max(0.001, freq / 0.5);
+                                const dir = (1 - ratio) >= 0 ? 1 : -1;
+                                depthA.gain.value = dir;
+                                depthB.gain.value = dir;
+                            }
+                        };
+                    }
+
+                    window.__ohoUpdateAudioProcessor = function() {
+                        const v = document.querySelector('video');
+                        if (!v) return;
+                        // Kunci kecepatan video selalu 1.0x agar TEMPO TETAP ORIGINAL!
+                        v.preservesPitch = true;
+                        v.playbackRate = 1.0;
+
+                        if (!v.__ohoAudioPipe) {
+                            try {
+                                v.crossOrigin = 'anonymous';
+                                const Ctx = window.AudioContext || window.webkitAudioContext;
+                                const ctx = new Ctx();
+                                const src = ctx.createMediaElementSource(v);
+
+                                // Matrix Kanal: Stereo (0), Mono (1), Kiri Only (2), Kanan Only (3)
+                                const splitter = ctx.createChannelSplitter(2);
+                                const gLL = ctx.createGain();
+                                const gLR = ctx.createGain();
+                                const gRL = ctx.createGain();
+                                const gRR = ctx.createGain();
+                                const merger = ctx.createChannelMerger(2);
+
+                                src.connect(splitter);
+                                splitter.connect(gLL, 0);
+                                splitter.connect(gLR, 0);
+                                splitter.connect(gRL, 1);
+                                splitter.connect(gRR, 1);
+
+                                gLL.connect(merger, 0, 0);
+                                gRL.connect(merger, 0, 0);
+                                gLR.connect(merger, 0, 1);
+                                gRR.connect(merger, 0, 1);
+
+                                // Jalur Bypass (Nada = 0) & Jalur Pitch Shift (Nada != 0)
+                                const dryGain = ctx.createGain();
+                                const wetGain = ctx.createGain();
+                                const pitchNode = createGranularPitchNode(ctx);
+
+                                merger.connect(dryGain);
+                                merger.connect(pitchNode.input);
+                                pitchNode.output.connect(wetGain);
+
+                                dryGain.connect(ctx.destination);
+                                wetGain.connect(ctx.destination);
+
+                                v.__ohoAudioPipe = {
+                                    ctx: ctx, gLL: gLL, gLR: gLR, gRL: gRL, gRR: gRR,
+                                    dryGain: dryGain, wetGain: wetGain, pitchNode: pitchNode
+                                };
+                            } catch (e) {
+                                return;
+                            }
+                        }
+
+                        const p = v.__ohoAudioPipe;
+                        if (p.ctx.state === 'suspended') p.ctx.resume();
+
+                        const m = window.__ohoRouteMode || 0;
+                        if (m === 0) { // STEREO L+R
+                            p.gLL.gain.value = 1.0; p.gLR.gain.value = 0.0;
+                            p.gRL.gain.value = 0.0; p.gRR.gain.value = 1.0;
+                        } else if (m === 1) { // MONO L+R (Campur L+R 50%-50% ke kedua kanal)
+                            p.gLL.gain.value = 0.5; p.gLR.gain.value = 0.5;
+                            p.gRL.gain.value = 0.5; p.gRR.gain.value = 0.5;
+                        } else if (m === 2) { // KIRI L ONLY (Saluran L penuh ke L & R)
+                            p.gLL.gain.value = 1.0; p.gLR.gain.value = 1.0;
+                            p.gRL.gain.value = 0.0; p.gRR.gain.value = 0.0;
+                        } else if (m === 3) { // KANAN R ONLY (Saluran R penuh ke L & R)
+                            p.gLL.gain.value = 0.0; p.gLR.gain.value = 0.0;
+                            p.gRL.gain.value = 1.0; p.gRR.gain.value = 1.0;
+                        }
+
+                        const st = window.__ohoPitchSteps || 0;
+                        if (st === 0) {
+                            p.dryGain.gain.value = 1.0;
+                            p.wetGain.gain.value = 0.0;
+                        } else {
+                            p.pitchNode.setSemitones(st);
+                            p.dryGain.gain.value = 0.0;
+                            p.wetGain.gain.value = 1.0;
+                        }
+                    };
+
+                    // 5. Loop penjaga tampilan penuh saat nonton, auto-skip iklan, & anti-auto-pause
                     let wasAd = false;
                     let prevMuted = false;
                     setInterval(function() {
+                        const isWatchPage = window.location.pathname.includes('/watch');
+                        if (isWatchPage) {
+                            document.documentElement.classList.add('oho-watch-full');
+                        } else {
+                            document.documentElement.classList.remove('oho-watch-full');
+                        }
+
                         const player = document.querySelector('.html5-video-player');
                         const video = document.querySelector('video');
                         const isAd = player && (player.classList.contains('ad-showing') || player.classList.contains('ad-interrupting'));
@@ -1582,103 +1737,40 @@ class MainActivity : AppCompatActivity() {
                             };
                             video.addEventListener('play', function() {
                                 window.__ohoUserPaused = false;
+                                window.__ohoUpdateAudioProcessor();
                             });
                         }
-                    }, 220);
+                    }, 250);
                 }
             })();
         """.trimIndent()
         view?.evaluateJavascript(js, null)
     }
 
-    private fun applyYoutubeFullVideoCss(enableFull: Boolean) {
-        if (!this::ytWebView.isInitialized) return
-        val js = if (enableFull) {
-            "document.documentElement.classList.add('oho-yt-full');"
-        } else {
-            "document.documentElement.classList.remove('oho-yt-full');"
-        }
-        ytWebView.evaluateJavascript(js, null)
-    }
-
-    // === PENGATUR 4 MODE LAYAR: YT+RTA | YT FULL | RTA DSP | LIPAT ===
+    // === PENGATUR 2 MODE LAYAR: YOUTUBE FULL & RTA DSP ===
     private fun setDisplayDeckMode(mode: Int) {
         displayDeckMode = mode
-        val btns = arrayOf(btnModeSplit, btnModeYtFull, btnModeRtaFull, btnModeFold)
-        for (i in 0..3) {
-            if (i == mode) {
-                btns[i].background = makeRoundedBg("#0284C7", "#38BDF8", dp(7).toFloat())
-                btns[i].setTextColor(Color.WHITE)
-            } else {
-                btns[i].background = makeRoundedBg("#1E293B", "#475569", dp(7).toFloat())
-                btns[i].setTextColor(Color.parseColor("#CBD5E1"))
-            }
+        if (mode == 0) { // YOUTUBE FULL
+            btnModeYtFull.background = makeRoundedBg("#0284C7", "#38BDF8", dp(7).toFloat())
+            btnModeYtFull.setTextColor(Color.WHITE)
+            btnModeRtaDsp.background = makeRoundedBg("#1E293B", "#475569", dp(7).toFloat())
+            btnModeRtaDsp.setTextColor(Color.parseColor("#CBD5E1"))
+
+            ytWebView.visibility = View.VISIBLE
+            rtaView.visibility = View.GONE
+        } else { // RTA DSP (Semi-transparan tipis di atas ytWebView agar Chromium tetap memutar musik!)
+            btnModeRtaDsp.background = makeRoundedBg("#0284C7", "#38BDF8", dp(7).toFloat())
+            btnModeRtaDsp.setTextColor(Color.WHITE)
+            btnModeYtFull.background = makeRoundedBg("#1E293B", "#475569", dp(7).toFloat())
+            btnModeYtFull.setTextColor(Color.parseColor("#CBD5E1"))
+
+            ytWebView.visibility = View.VISIBLE
+            rtaView.visibility = View.VISIBLE
+            rtaView.bringToFront()
+            ensureVisualizerPermissionAndStart()
         }
 
-        val stageLp = deckStageFrame.layoutParams
-        val ytLp = ytWebView.layoutParams as FrameLayout.LayoutParams
-        val rtaLp = rtaView.layoutParams as FrameLayout.LayoutParams
-        val sh = screenHeightPx()
-
-        when (mode) {
-            0 -> { // YT + RTA (Keduanya tampil bersamaan & video di atas dapat diklik langsung)
-                stageLp.height = dp(264)
-                ytWebView.visibility = View.VISIBLE
-                ytLp.height = dp(196)
-                ytLp.gravity = Gravity.TOP
-
-                rtaView.visibility = View.VISIBLE
-                rtaLp.height = dp(64)
-                rtaLp.gravity = Gravity.BOTTOM
-
-                lipatCoverBanner.visibility = View.GONE
-                applyYoutubeFullVideoCss(false)
-            }
-            1 -> { // YT FULL (Video memenuhi penuh bingkai layar secara proporsional)
-                val fullH = (sh * 0.48f).toInt().coerceIn(dp(275), dp(350))
-                stageLp.height = fullH
-                ytWebView.visibility = View.VISIBLE
-                ytLp.height = fullH
-                ytLp.gravity = Gravity.TOP
-
-                rtaView.visibility = View.GONE
-                lipatCoverBanner.visibility = View.GONE
-                applyYoutubeFullVideoCss(true)
-            }
-            2 -> { // RTA DSP (RTA besar di lapisan depan, ytWebView tetap ukuran penuh di belakang agar musik hidup!)
-                val rtaH = dp(200)
-                stageLp.height = rtaH
-                ytWebView.visibility = View.VISIBLE
-                ytLp.height = rtaH
-                ytLp.gravity = Gravity.TOP
-
-                rtaView.visibility = View.VISIBLE
-                rtaLp.height = rtaH
-                rtaLp.gravity = Gravity.TOP
-                rtaView.bringToFront()
-
-                lipatCoverBanner.visibility = View.GONE
-                applyYoutubeFullVideoCss(false)
-                ensureVisualizerPermissionAndStart()
-            }
-            3 -> { // LIPAT (Layar YT tertutup 100% oleh banner lipat, ytWebView tetap aktif di belakang agar musik jalan)
-                stageLp.height = dp(40)
-                ytWebView.visibility = View.VISIBLE
-                ytLp.height = dp(196)
-                ytLp.gravity = Gravity.TOP
-
-                rtaView.visibility = View.GONE
-                lipatCoverBanner.visibility = View.VISIBLE
-                lipatCoverBanner.bringToFront()
-                applyYoutubeFullVideoCss(false)
-            }
-        }
-
-        deckStageFrame.layoutParams = stageLp
-        ytWebView.layoutParams = ytLp
-        rtaView.layoutParams = rtaLp
-
-        // Pastikan musik tetap lanjut diputar jika sebelumnya tidak dijeda pengguna
+        // Pastikan lagu tetap berputar jika tidak dijeda pengguna
         ytWebView.evaluateJavascript("var v=document.querySelector('video'); if(v && v.paused && window.__ohoUserPaused===false){ v.play(); }", null)
     }
 
@@ -1719,8 +1811,8 @@ class MainActivity : AppCompatActivity() {
         dynView.invalidate()
     }
 
-    // === 4 MODE ROUTING KANAL DI MESIN DSP ANDROID ===
-    private fun updateChannelRouteUiAndApply() {
+    // === 4 MODE ROUTING KANAL (DSP SISTEM + WEB AUDIO MATRIX + VU METER SYNC) ===
+    private fun updateChannelRouteUiAndApply(showToast: Boolean = true) {
         val modeToast = when (channelRouteMode) {
             0 -> {
                 btnRouteMode.text = "STEREO\nL + R"
@@ -1732,7 +1824,7 @@ class MainActivity : AppCompatActivity() {
                 btnRouteMode.text = "MONO\nL + R"
                 btnRouteMode.background = makeRoundedBg("#065F46", "#34D399", dp(7).toFloat())
                 btnRouteMode.setTextColor(Color.WHITE)
-                "Mode Kanal: MONO Seimbang (L = R)"
+                "Mode Kanal: MONO Seimbang (L + R)"
             }
             2 -> {
                 btnRouteMode.text = "KIRI\nL ONLY"
@@ -1747,28 +1839,38 @@ class MainActivity : AppCompatActivity() {
                 "Mode Kanal: KANAN (R Only — Vokal Kiri Dibisukan)"
             }
         }
+        vuMeterView.routeMode = channelRouteMode
+        vuMeterView.invalidate()
+
         applyChannelBoostAndRouting()
+        applyYoutubeChannelMatrix(channelRouteMode)
         updateActiveSfxPanAndVolume()
         updateBgmPanAndVolume()
-        Toast.makeText(this, modeToast, Toast.LENGTH_SHORT).show()
+        if (showToast) Toast.makeText(this, modeToast, Toast.LENGTH_SHORT).show()
     }
 
     private fun applyChannelBoostAndRouting() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && dynamicsProcessing != null) {
                 val (gainL, gainR) = when (channelRouteMode) {
-                    1 -> { // MONO: samakan gain L dan R
+                    1 -> {
                         val avg = (boostLeftDb + boostRightDb) / 2f
                         Pair(avg, avg)
                     }
-                    2 -> Pair(boostLeftDb.toFloat(), -90f) // KIRI L ONLY
-                    3 -> Pair(-90f, boostRightDb.toFloat()) // KANAN R ONLY
-                    else -> Pair(boostLeftDb.toFloat(), boostRightDb.toFloat()) // STEREO
+                    2 -> Pair(boostLeftDb.toFloat(), -90f)
+                    3 -> Pair(-90f, boostRightDb.toFloat())
+                    else -> Pair(boostLeftDb.toFloat(), boostRightDb.toFloat())
                 }
                 dynamicsProcessing!!.setInputGainbyChannel(0, gainL)
                 dynamicsProcessing!!.setInputGainbyChannel(1, gainR)
             }
         } catch (_: Exception) {}
+    }
+
+    private fun applyYoutubeChannelMatrix(mode: Int) {
+        if (!this::ytWebView.isInitialized) return
+        val js = "window.__ohoRouteMode = $mode; if(typeof window.__ohoUpdateAudioProcessor === 'function'){ window.__ohoUpdateAudioProcessor(); }"
+        ytWebView.evaluateJavascript(js, null)
     }
 
     private fun getChannelPanMultipliers(): Pair<Float, Float> = when (channelRouteMode) {
@@ -1837,20 +1939,21 @@ class MainActivity : AppCompatActivity() {
         btnKeyDisplay.text = label
         btnKeyDisplay.background = if (pitchSteps != 0) makeRoundedBg("#4C1D95", "#C084FC", dp(7).toFloat())
         else makeRoundedBg("#161E2E", "#64748B", dp(7).toFloat())
-        applyYoutubePitchSteps(pitchSteps)
+        applyYoutubePitchStepsFixedTempo(pitchSteps)
     }
 
-    private fun applyYoutubePitchSteps(steps: Int) {
+    private fun applyYoutubePitchStepsFixedTempo(steps: Int) {
         if (!this::ytWebView.isInitialized) return
-        val rate = 2.0.pow(steps / 12.0)
         val js = """
             (function() {
+                window.__ohoPitchSteps = $steps;
                 var v = document.querySelector('video');
                 if (v) {
-                    v.preservesPitch = false;
-                    v.mozPreservesPitch = false;
-                    v.webkitPreservesPitch = false;
-                    v.playbackRate = $rate;
+                    v.preservesPitch = true;
+                    v.playbackRate = 1.0;
+                }
+                if (typeof window.__ohoUpdateAudioProcessor === 'function') {
+                    window.__ohoUpdateAudioProcessor();
                 }
             })();
         """.trimIndent()
@@ -2254,6 +2357,7 @@ class MainActivity : AppCompatActivity() {
         prefs.putBoolean("last_tone_locked", isToneLocked)
         prefs.putBoolean("last_sub_bass", isSubBassActive)
         prefs.putBoolean("last_clarity", isClarityActive)
+        prefs.putInt("last_route_mode", channelRouteMode)
         prefs.putInt("last_boost_l", boostLeftDb)
         prefs.putInt("last_boost_r", boostRightDb)
         prefs.putInt("last_music_vol", normalMusicVolume)
@@ -2280,6 +2384,7 @@ class MainActivity : AppCompatActivity() {
         isToneLocked = prefs.getBoolean("last_tone_locked", false)
         isSubBassActive = prefs.getBoolean("last_sub_bass", false)
         isClarityActive = prefs.getBoolean("last_clarity", false)
+        channelRouteMode = prefs.getInt("last_route_mode", 0)
         boostLeftDb = prefs.getInt("last_boost_l", 6)
         boostRightDb = prefs.getInt("last_boost_r", 6)
         normalMusicVolume = prefs.getInt("last_music_vol", 85)
@@ -2324,6 +2429,7 @@ class MainActivity : AppCompatActivity() {
                     override fun onWaveFormDataCapture(v: Visualizer?, waveform: ByteArray?, rate: Int) {
                         if (waveform != null && waveform.isNotEmpty()) {
                             rtaView.updateWaveformFallback(waveform)
+                            vuMeterView.updateFromWaveform(waveform)
                         }
                     }
                     override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, rate: Int) {
@@ -2372,7 +2478,87 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
-    // === 24-BAND REAL-TIME SPECTRUM ANALYZER ===
+    // === STEREO LED VU METER (L & R) ===
+    class StereoLedVuView(context: Context) : View(context) {
+        var routeMode = 0 // 0=STEREO, 1=MONO, 2=L ONLY, 3=R ONLY
+        private var levelL = 0.05f
+        private var levelR = 0.05f
+        private val d = context.resources.displayMetrics.density
+
+        private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#0B0F17"); style = Paint.Style.FILL
+        }
+        private val segOffPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#1E293B"); style = Paint.Style.FILL
+        }
+        private val segOnPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+        private val tagPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = 8f * d; typeface = Typeface.DEFAULT_BOLD; textAlign = Paint.Align.CENTER
+        }
+
+        fun updateFromWaveform(waveform: ByteArray) {
+            var sumEven = 0f
+            var sumOdd = 0f
+            val limit = min(waveform.size, 256)
+            for (i in 0 until limit) {
+                val amp = abs(((waveform[i].toInt() and 0xFF) - 128) / 128f)
+                if (i % 2 == 0) sumEven += amp else sumOdd += amp
+            }
+            val rawA = ((sumEven / (limit / 2f)) * 4.5f).coerceIn(0.03f, 1.0f)
+            val rawB = ((sumOdd / (limit / 2f)) * 4.5f).coerceIn(0.03f, 1.0f)
+
+            val (targetL, targetR) = when (routeMode) {
+                1 -> { // MONO: L dan R bergerak kembar identik
+                    val mono = (rawA + rawB) / 2f
+                    Pair(mono, mono)
+                }
+                2 -> Pair(rawA, 0.0f) // KIRI L ONLY
+                3 -> Pair(0.0f, rawB) // KANAN R ONLY
+                else -> Pair(rawA, min(1.0f, rawB * 1.08f)) // STEREO
+            }
+
+            levelL = max(targetL, levelL * 0.72f)
+            levelR = max(targetR, levelR * 0.72f)
+            postInvalidate()
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            canvas.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), 5f * d, 5f * d, bgPaint)
+            val rowH = (height - 4f * d) / 2f
+            drawBar(canvas, "VU L", levelL, 1.5f * d, rowH, "#22D3EE")
+            drawBar(canvas, "VU R", levelR, 2.5f * d + rowH, rowH, "#F59E0B")
+        }
+
+        private fun drawBar(canvas: Canvas, label: String, level: Float, top: Float, h: Float, labelHex: String) {
+            tagPaint.color = Color.parseColor(labelHex)
+            canvas.drawText(label, 16f * d, top + h * 0.78f, tagPaint)
+
+            val startX = 33f * d
+            val endX = width - 6f * d
+            val segments = 24
+            val gap = 1.6f * d
+            val segW = (endX - startX - gap * (segments - 1)) / segments
+            val activeCount = (level * segments).roundToInt()
+
+            for (i in 0 until segments) {
+                val left = startX + i * (segW + gap)
+                val paint = if (i < activeCount) {
+                    segOnPaint.color = when {
+                        i >= 20 -> Color.parseColor("#EF4444")
+                        i >= 15 -> Color.parseColor("#F59E0B")
+                        else -> Color.parseColor("#10B981")
+                    }
+                    segOnPaint
+                } else {
+                    segOffPaint
+                }
+                canvas.drawRoundRect(left, top + 1f * d, left + segW, top + h - 1f * d, 1.5f * d, 1.5f * d, paint)
+            }
+        }
+    }
+
+    // === 24-BAND REAL-TIME SPECTRUM ANALYZER (SEMI-TRANSPARAN AGAR MUSIK YOUTUBE ANTI-PAUSE) ===
     class RtaSpectrumView(context: Context) : View(context) {
         private val numBands = 24
         private val barLevels = FloatArray(numBands) { 0.06f }
@@ -2380,8 +2566,9 @@ class MainActivity : AppCompatActivity() {
         private var lastFftTimestamp = 0L
         private val d = context.resources.displayMetrics.density
 
+        // Alpha 0xEA (~92%) agar terlihat tajam seperti hitam pekat namun Chromium tetap mendeteksi video di belakangnya
         private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#090C12"); style = Paint.Style.FILL
+            color = Color.parseColor("#EA090C12"); style = Paint.Style.FILL
         }
         private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.parseColor("#1E293B"); strokeWidth = 1f * d
@@ -2391,7 +2578,10 @@ class MainActivity : AppCompatActivity() {
             color = Color.parseColor("#F8FAFC"); style = Paint.Style.FILL
         }
         private val freqLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#64748B"); textSize = 7.5f * d; textAlign = Paint.Align.CENTER
+            color = Color.parseColor("#94A3B8"); textSize = 8f * d; textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD
+        }
+        private val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#38BDF8"); textSize = 8.5f * d; textAlign = Paint.Align.LEFT; typeface = Typeface.DEFAULT_BOLD
         }
 
         fun updateFftData(fft: ByteArray) {
@@ -2408,7 +2598,7 @@ class MainActivity : AppCompatActivity() {
                     if (mag > maxMag) maxMag = mag
                 }
                 totalEnergy += maxMag
-                val norm = (ln(1f + maxMag * 5.5f) / 3.9f).coerceIn(0.05f, 1.0f)
+                val norm = (ln(1f + maxMag * 5.8f) / 3.8f).coerceIn(0.05f, 1.0f)
                 barLevels[b] = max(norm, barLevels[b] * 0.76f)
                 if (barLevels[b] >= peakLevels[b]) {
                     peakLevels[b] = barLevels[b]
@@ -2433,7 +2623,7 @@ class MainActivity : AppCompatActivity() {
                         sum += abs(((waveform[offset + j].toInt() and 0xFF) - 128) / 128f)
                     }
                 }
-                val avg = (sum / step) * 3.8f
+                val avg = (sum / step) * 4.0f
                 val shaped = (avg * (1.15f - (b.toFloat() / numBands) * 0.45f)).coerceIn(0.05f, 1.0f)
                 barLevels[b] = max(shaped, barLevels[b] * 0.76f)
                 if (barLevels[b] >= peakLevels[b]) {
@@ -2448,18 +2638,20 @@ class MainActivity : AppCompatActivity() {
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             canvas.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), 6f * d, 6f * d, bgPaint)
+            canvas.drawText("DLMS 24-BAND REAL-TIME SPECTRUM ANALYZER", 8f * d, 12f * d, titlePaint)
 
-            val bottomY = height - 11f * d
-            val usableH = bottomY - 4f * d
-            val gap = 2.2f * d
-            val barW = (width - 8f * d - gap * (numBands - 1)) / numBands
-            val startX = 4f * d
+            val topY = 17f * d
+            val bottomY = height - 13f * d
+            val usableH = bottomY - topY
+            val gap = 2.4f * d
+            val barW = (width - 12f * d - gap * (numBands - 1)) / numBands
+            val startX = 6f * d
 
-            canvas.drawLine(startX, bottomY * 0.35f, width - startX, bottomY * 0.35f, gridPaint)
-            canvas.drawLine(startX, bottomY * 0.70f, width - startX, bottomY * 0.70f, gridPaint)
+            canvas.drawLine(startX, topY + usableH * 0.33f, width - startX, topY + usableH * 0.33f, gridPaint)
+            canvas.drawLine(startX, topY + usableH * 0.66f, width - startX, topY + usableH * 0.66f, gridPaint)
 
-            val segH = 3.2f * d
-            val segGap = 1.4f * d
+            val segH = 3.5f * d
+            val segGap = 1.5f * d
 
             for (i in 0 until numBands) {
                 val left = startX + i * (barW + gap)
@@ -2482,7 +2674,7 @@ class MainActivity : AppCompatActivity() {
             val markers = arrayOf("31Hz", "125Hz", "500Hz", "2kHz", "8kHz", "16kHz")
             for (m in markers.indices) {
                 val x = (width / 6f) * m + (width / 12f)
-                canvas.drawText(markers[m], x, height - 1.5f * d, freqLabelPaint)
+                canvas.drawText(markers[m], x, height - 2f * d, freqLabelPaint)
             }
         }
     }
