@@ -580,15 +580,15 @@ class MainActivity : AppCompatActivity() {
             loadUrl("https://m.youtube.com")
 
             setOnTouchListener { v, event ->
-                v.requestFocus()
-                if (event.action == MotionEvent.ACTION_DOWN) {
-                    v.evaluateJavascript("if(typeof window.__ohoUnlockAudioContext==='function'){ window.__ohoUnlockAudioContext(); }", null)
-                }
-                if (event.action == MotionEvent.ACTION_MOVE) {
-                    v.parent?.requestDisallowInterceptTouchEvent(true)
-                }
-                false
-            }
+             v.requestFocus()
+             if (event.action == MotionEvent.ACTION_DOWN) {
+                 ytWebView.evaluateJavascript("if(typeof window.__ohoUnlockAudioContext==='function'){ window.__ohoUnlockAudioContext(); }", null)
+             }
+             if (event.action == MotionEvent.ACTION_MOVE) {
+                 v.parent?.requestDisallowInterceptTouchEvent(true)
+             }
+             false
+         }
         }
         deckStageFrame.addView(ytWebView)
 
