@@ -25,6 +25,7 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -89,7 +90,7 @@ class MainActivity : AppCompatActivity() {
     private var timerAccumulatedMs = 0L
     private val timerHandler = Handler(Looper.getMainLooper())
 
-    // Komponen UI
+    // Komponen UI Utama
     private lateinit var rootScroll: ScrollView
     private lateinit var tvLiveTimer: TextView
     private lateinit var btnTimerToggle: Button
@@ -100,9 +101,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvBoostRVal: TextView
     private lateinit var btnRouteMode: Button
 
-    // Display Deck (YouTube + RTA dalam satu layar)
+    // Display Deck (Layar Terpadu YouTube + RTA + Mode Lipat)
     private lateinit var ytCard: LinearLayout
+    private lateinit var deckStageFrame: FrameLayout
     private lateinit var ytWebView: WebView
+    private lateinit var lipatCoverBanner: TextView
     private lateinit var btnModeSplit: Button
     private lateinit var btnModeYtFull: Button
     private lateinit var btnModeRtaFull: Button
@@ -256,7 +259,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(9), dp(8), dp(9), dp(14))
         }
 
-        // === 1. TOP MASTER HEADER & LIVE TIMER ===
+        // === 1. BARIS HEADER & LIVE TIMER ===
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -388,7 +391,7 @@ class MainActivity : AppCompatActivity() {
         header.addView(btnExit)
         root.addView(header)
 
-        // === 2. MASTER L & R OUTPUT BOOST + STEREO / MONO / KIRI / KANAN ===
+        // === 2. MASTER OUTPUT L & R + SAKELAR 4-MODE KANAL ===
         val lrCard = createCardPanel().apply { setPadding(dp(8), dp(5), dp(8), dp(5)) }
         val lrRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -531,9 +534,14 @@ class MainActivity : AppCompatActivity() {
         deckHeaderRow.addView(btnSearchYt)
         ytCard.addView(deckHeaderRow)
 
-        // Layar YouTube (Selalu VISIBLE di semua mode agar musik tidak pernah berhenti!)
+        // Wadah Berlapis (FrameLayout) agar ytWebView selalu berukuran penuh di lapisan bawah (anti auto-pause!)
+        deckStageFrame = FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(264))
+        }
+
+        // Lapisan Bawah: Layar YouTube (Anti-Iklan Sejak Awal Halaman & Tanpa Penyadapan Audio CORS)
         ytWebView = WebView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(195))
+            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, dp(196))
             isFocusable = true
             isFocusableInTouchMode = true
             settings.javaScriptEnabled = true
@@ -546,7 +554,7 @@ class MainActivity : AppCompatActivity() {
                     "doubleclick.net", "googlesyndication.com", "googleadservices.com",
                     "adservice.google", "pagead2.googlesyndication.com", "ads.youtube.com",
                     "s0.2mdn.net", "static.doubleclick.net", "pubads.g.doubleclick.net",
-                    "imasdk.googleapis.com", "securepubads.g.doubleclick.net"
+                    "imasdk.googleapis.com", "securepubads.g.doubleclick.net", "tpc.googlesyndication.com"
                 )
 
                 override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
@@ -561,22 +569,22 @@ class MainActivity : AppCompatActivity() {
 
                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                     super.onPageStarted(view, url, favicon)
-                    injectEarlyAdAndVisibilityShield(view)
+                    injectEarlyAdAndPlaybackShield(view)
                 }
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
-                    injectEarlyAdAndVisibilityShield(view)
+                    injectEarlyAdAndPlaybackShield(view)
                     applyYoutubeVolume(if (isMasterMuted || isYtMuted) 0 else currentMusicVolume)
                     applyYoutubePitchSteps(pitchSteps)
                     applyYoutubeLoop(isYtLooping)
-                    applyYoutubeChannelMatrix(channelRouteMode)
+                    applyYoutubeFullVideoCss(displayDeckMode == 1)
                 }
             }
             webChromeClient = WebChromeClient()
             loadUrl("https://m.youtube.com")
 
-            // Ketukan langsung di layar video diteruskan sepenuhnya ke pemutar YouTube
+            // Sentuhan langsung di layar video diteruskan sepenuhnya ke pemutar YouTube
             setOnTouchListener { v, event ->
                 v.requestFocus()
                 if (event.action == MotionEvent.ACTION_MOVE) {
@@ -585,19 +593,38 @@ class MainActivity : AppCompatActivity() {
                 false
             }
         }
-        ytCard.addView(ytWebView)
+        deckStageFrame.addView(ytWebView)
 
-        // Grafik RTA 24-Band Real-Time Spectrum Analyzer
+        // Lapisan Grafik RTA 24-Band Real-Time Spectrum Analyzer
         rtaView = RtaSpectrumView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(64)).apply {
-                topMargin = dp(4)
+            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, dp(64)).apply {
+                gravity = Gravity.BOTTOM
             }
             setOnClickListener {
                 ensureVisualizerPermissionAndStart()
                 Toast.makeText(context, "Sensor RTA 24-Band disegarkan", Toast.LENGTH_SHORT).show()
             }
         }
-        ytCard.addView(rtaView)
+        deckStageFrame.addView(rtaView)
+
+        // Lapisan Penutup Mode LIPAT (Menutup 100% tampilan YouTube saat LIPAT dipilih, musik tetap hidup)
+        lipatCoverBanner = TextView(this).apply {
+            text = "🎵 AUDIO YOUTUBE BERJALAN — MODE LIPAT (KETUK YT+RTA UNTUK BUKA)"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#38BDF8"))
+            gravity = Gravity.CENTER
+            background = makeRoundedBg("#0E1522", "#38BDF8", dp(7).toFloat())
+            visibility = View.GONE
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            setOnClickListener { setDisplayDeckMode(0) }
+        }
+        deckStageFrame.addView(lipatCoverBanner)
+
+        ytCard.addView(deckStageFrame)
 
         // Baris Kendali YouTube 1: -10s | PLAY/PAUSE | +10s | MUTE YT
         val ytTransportRow1 = LinearLayout(this).apply {
@@ -614,7 +641,23 @@ class MainActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0, dp(30), 1.3f).apply { marginEnd = dp(4) }
             setOnClickListener {
                 ensureVisualizerPermissionAndStart()
-                ytWebView.evaluateJavascript("var v=document.querySelector('video'); if(v){ if(v.paused){ window.__ohoUserPaused=false; v.play(); } else { window.__ohoUserPaused=true; v.pause(); } }", null)
+                ytWebView.evaluateJavascript(
+                    """
+                    (function(){
+                        var v=document.querySelector('video');
+                        if(v){
+                            if(v.paused){
+                                window.__ohoUserPaused=false;
+                                v.play();
+                            } else {
+                                window.__ohoUserPaused=true;
+                                if(typeof v.__ohoOrigPause==='function') v.__ohoOrigPause.call(v);
+                                else v.pause();
+                            }
+                        }
+                    })();
+                    """.trimIndent(), null
+                )
             }
         }
         val btnForward = makeConsoleButton("+10s ⏩", "#1E293B", "#475569", "#E2E8F0", 9f).apply {
@@ -764,8 +807,7 @@ class MainActivity : AppCompatActivity() {
                 override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
                     sfxVolume = p
                     tvSfxVolPct.text = "$p%"
-                    val volFloat = sfxVolume / 100f
-                    for (sid in activeStreams) soundPool.setVolume(sid, volFloat, volFloat)
+                    updateActiveSfxPanAndVolume()
                 }
                 override fun onStartTrackingTouch(sb: SeekBar?) {}
                 override fun onStopTrackingTouch(sb: SeekBar?) { saveLastSessionState() }
@@ -1368,10 +1410,7 @@ class MainActivity : AppCompatActivity() {
                 override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
                     bgmVolume = p
                     tvBgmVolPct.text = "$p%"
-                    if (!isMasterMuted) {
-                        val v = p / 100f
-                        bgmPlayer?.setVolume(v, v)
-                    }
+                    updateBgmPanAndVolume()
                 }
                 override fun onStartTrackingTouch(sb: SeekBar?) {}
                 override fun onStopTrackingTouch(sb: SeekBar?) { saveLastSessionState() }
@@ -1408,12 +1447,12 @@ class MainActivity : AppCompatActivity() {
         ensureVisualizerPermissionAndStart()
     }
 
-    // === PENYARING ANTI-IKLAN LAPIS GANDA + ANTI AUTO-PAUSE + CHANNEL MATRIX ===
-    private fun injectEarlyAdAndVisibilityShield(view: WebView?) {
+    // === PENYARING ANTI-IKLAN SEJAK AWAL HALAMAN & ANTI AUTO-PAUSE ===
+    private fun injectEarlyAdAndPlaybackShield(view: WebView?) {
         val js = """
             (function() {
-                if (!window.__ohoCoreShieldInstalled) {
-                    window.__ohoCoreShieldInstalled = true;
+                if (!window.__ohoShieldV63) {
+                    window.__ohoShieldV63 = true;
 
                     // 1. Paksa halaman selalu dianggap terlihat agar YouTube tidak auto-pause
                     try {
@@ -1421,7 +1460,26 @@ class MainActivity : AppCompatActivity() {
                         Object.defineProperty(document, 'visibilityState', { get: function() { return 'visible'; } });
                     } catch (e) {}
 
-                    // 2. Saring JSON API YouTube (fetch) untuk menghapus adPlacements & playerAds sebelum diputar
+                    // 2. Bersihkan objek awal ytInitialPlayerResponse sebelum diputar
+                    function stripAdKeys(obj) {
+                        if (!obj || typeof obj !== 'object') return obj;
+                        delete obj.adPlacements;
+                        delete obj.playerAds;
+                        delete obj.adSlots;
+                        delete obj.adBreakHeartbeatParams;
+                        return obj;
+                    }
+
+                    let _ytInitResp = window.ytInitialPlayerResponse;
+                    try {
+                        Object.defineProperty(window, 'ytInitialPlayerResponse', {
+                            get: function() { return stripAdKeys(_ytInitResp); },
+                            set: function(val) { _ytInitResp = stripAdKeys(val); },
+                            configurable: true
+                        });
+                    } catch (e) {}
+
+                    // 3. Saring JSON API YouTube (fetch & XHR)
                     const origFetch = window.fetch;
                     window.fetch = async function(...args) {
                         const res = await origFetch.apply(this, args);
@@ -1429,23 +1487,37 @@ class MainActivity : AppCompatActivity() {
                         if (url.includes('/youtubei/v1/player') || url.includes('/youtubei/v1/next')) {
                             try {
                                 const clone = res.clone();
-                                const json = await clone.json();
-                                if (json) {
-                                    delete json.adPlacements;
-                                    delete json.playerAds;
-                                    delete json.adSlots;
-                                    return new Response(JSON.stringify(json), {
-                                        status: res.status,
-                                        statusText: res.statusText,
-                                        headers: res.headers
-                                    });
-                                }
+                                const json = stripAdKeys(await clone.json());
+                                return new Response(JSON.stringify(json), {
+                                    status: res.status, statusText: res.statusText, headers: res.headers
+                                });
                             } catch (e) {}
                         }
                         return res;
                     };
 
-                    // 3. Sembunyikan banner iklan & sticky header agar area video lega
+                    const origXhrOpen = XMLHttpRequest.prototype.open;
+                    const origXhrSend = XMLHttpRequest.prototype.send;
+                    XMLHttpRequest.prototype.open = function(method, url) {
+                        this.__ohoUrl = (url || '').toString();
+                        return origXhrOpen.apply(this, arguments);
+                    };
+                    XMLHttpRequest.prototype.send = function() {
+                        if (this.__ohoUrl && (this.__ohoUrl.includes('/youtubei/v1/player') || this.__ohoUrl.includes('/youtubei/v1/next'))) {
+                            this.addEventListener('readystatechange', function() {
+                                if (this.readyState === 4 && this.responseText) {
+                                    try {
+                                        const cleaned = JSON.stringify(stripAdKeys(JSON.parse(this.responseText)));
+                                        Object.defineProperty(this, 'responseText', { get: function() { return cleaned; } });
+                                        Object.defineProperty(this, 'response', { get: function() { return cleaned; } });
+                                    } catch (e) {}
+                                }
+                            });
+                        }
+                        return origXhrSend.apply(this, arguments);
+                    };
+
+                    // 4. CSS Penyembunyi Banner Iklan & Mode Layar Penuh Video (YT FULL)
                     const style = document.createElement('style');
                     style.innerHTML = `
                         ytm-promoted-sparkles-web-renderer,
@@ -1457,10 +1529,32 @@ class MainActivity : AppCompatActivity() {
                         .ad-container, .ytp-ad-overlay-container, .ytp-ad-message-container {
                             display: none !important;
                         }
+                        html.oho-yt-full body {
+                            overflow: hidden !important;
+                            background: #000 !important;
+                        }
+                        html.oho-yt-full ytm-mobile-topbar-renderer,
+                        html.oho-yt-full ytm-item-section-renderer,
+                        html.oho-yt-full ytm-single-column-watch-next-results-renderer > :not(#player-container-id) {
+                            display: none !important;
+                        }
+                        html.oho-yt-full #player-container-id,
+                        html.oho-yt-full .player-container,
+                        html.oho-yt-full .html5-video-player,
+                        html.oho-yt-full video {
+                            position: fixed !important;
+                            top: 0 !important;
+                            left: 0 !important;
+                            width: 100vw !important;
+                            height: 100vh !important;
+                            max-height: 100vh !important;
+                            z-index: 9999 !important;
+                            background: #000 !important;
+                        }
                     `;
                     (document.head || document.documentElement).appendChild(style);
 
-                    // 4. Loop penjaga: Auto-skip jika masih lolos iklan & jaga pemutaran tetap hidup
+                    // 5. Penjaga Auto-Skip Iklan & Anti-Auto-Pause saat pindah tab tampilan
                     let wasAd = false;
                     let prevMuted = false;
                     setInterval(function() {
@@ -1478,28 +1572,36 @@ class MainActivity : AppCompatActivity() {
                             wasAd = false;
                         }
 
-                        if (video && !video.__ohoEventsBound) {
-                            video.__ohoEventsBound = true;
-                            video.addEventListener('pause', function() {
-                                if (!window.__ohoUserPaused && !document.hasFocus()) {
-                                    setTimeout(function() { if (!window.__ohoUserPaused) video.play().catch(function(){}); }, 120);
+                        if (video && !video.__ohoGuardAttached) {
+                            video.__ohoGuardAttached = true;
+                            video.__ohoOrigPause = video.pause;
+                            video.pause = function() {
+                                if (window.__ohoUserPaused === true) {
+                                    return video.__ohoOrigPause.apply(this, arguments);
                                 }
-                            });
+                            };
                             video.addEventListener('play', function() {
                                 window.__ohoUserPaused = false;
-                                if (typeof window.__ohoApplyMatrix === 'function') {
-                                    window.__ohoApplyMatrix(window.__ohoRouteMode || 0);
-                                }
                             });
                         }
-                    }, 250);
+                    }, 220);
                 }
             })();
         """.trimIndent()
         view?.evaluateJavascript(js, null)
     }
 
-    // === PENGATUR MODE LAYAR YOUTUBE & RTA 24-BAND (PROPORSIONAL & MUSIK ANTI-MATI) ===
+    private fun applyYoutubeFullVideoCss(enableFull: Boolean) {
+        if (!this::ytWebView.isInitialized) return
+        val js = if (enableFull) {
+            "document.documentElement.classList.add('oho-yt-full');"
+        } else {
+            "document.documentElement.classList.remove('oho-yt-full');"
+        }
+        ytWebView.evaluateJavascript(js, null)
+    }
+
+    // === PENGATUR 4 MODE LAYAR: YT+RTA | YT FULL | RTA DSP | LIPAT ===
     private fun setDisplayDeckMode(mode: Int) {
         displayDeckMode = mode
         val btns = arrayOf(btnModeSplit, btnModeYtFull, btnModeRtaFull, btnModeFold)
@@ -1513,39 +1615,70 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        val ytLp = ytWebView.layoutParams
-        val rtaLp = rtaView.layoutParams
+        val stageLp = deckStageFrame.layoutParams
+        val ytLp = ytWebView.layoutParams as FrameLayout.LayoutParams
+        val rtaLp = rtaView.layoutParams as FrameLayout.LayoutParams
         val sh = screenHeightPx()
 
         when (mode) {
-            0 -> { // YT + RTA (Keduanya tampil bersamaan & video pas layar)
+            0 -> { // YT + RTA (Keduanya tampil bersamaan & video di atas dapat diklik langsung)
+                stageLp.height = dp(264)
                 ytWebView.visibility = View.VISIBLE
-                ytLp.height = dp(195)
+                ytLp.height = dp(196)
+                ytLp.gravity = Gravity.TOP
+
                 rtaView.visibility = View.VISIBLE
                 rtaLp.height = dp(64)
+                rtaLp.gravity = Gravity.BOTTOM
+
+                lipatCoverBanner.visibility = View.GONE
+                applyYoutubeFullVideoCss(false)
             }
-            1 -> { // YT FULL (Proporsional & aman untuk HP layar kecil: video lega + rekomendasi bawah tetap terlihat)
+            1 -> { // YT FULL (Video memenuhi penuh bingkai layar secara proporsional)
+                val fullH = (sh * 0.48f).toInt().coerceIn(dp(275), dp(350))
+                stageLp.height = fullH
                 ytWebView.visibility = View.VISIBLE
-                ytLp.height = (sh * 0.45f).toInt().coerceIn(dp(265), dp(320))
+                ytLp.height = fullH
+                ytLp.gravity = Gravity.TOP
+
                 rtaView.visibility = View.GONE
+                lipatCoverBanner.visibility = View.GONE
+                applyYoutubeFullVideoCss(true)
             }
-            2 -> { // RTA DSP (RTA besar di bawah, layar YT tetap terbuka sebagian di atas agar musik 100% hidup)
+            2 -> { // RTA DSP (RTA besar di lapisan depan, ytWebView tetap ukuran penuh di belakang agar musik hidup!)
+                val rtaH = dp(200)
+                stageLp.height = rtaH
                 ytWebView.visibility = View.VISIBLE
-                ytLp.height = dp(88)
+                ytLp.height = rtaH
+                ytLp.gravity = Gravity.TOP
+
                 rtaView.visibility = View.VISIBLE
-                rtaLp.height = dp(155)
+                rtaLp.height = rtaH
+                rtaLp.gravity = Gravity.TOP
+                rtaView.bringToFront()
+
+                lipatCoverBanner.visibility = View.GONE
+                applyYoutubeFullVideoCss(false)
                 ensureVisualizerPermissionAndStart()
             }
-            3 -> { // LIPAT (Bingkai ringkas, YouTube tetap VISIBLE agar musik jalan terus)
+            3 -> { // LIPAT (Layar YT tertutup 100% oleh banner lipat, ytWebView tetap aktif di belakang agar musik jalan)
+                stageLp.height = dp(40)
                 ytWebView.visibility = View.VISIBLE
-                ytLp.height = dp(52)
+                ytLp.height = dp(196)
+                ytLp.gravity = Gravity.TOP
+
                 rtaView.visibility = View.GONE
+                lipatCoverBanner.visibility = View.VISIBLE
+                lipatCoverBanner.bringToFront()
+                applyYoutubeFullVideoCss(false)
             }
         }
+
+        deckStageFrame.layoutParams = stageLp
         ytWebView.layoutParams = ytLp
         rtaView.layoutParams = rtaLp
 
-        // Pastikan pemutar YouTube tetap berputar jika sebelumnya sedang play
+        // Pastikan musik tetap lanjut diputar jika sebelumnya tidak dijeda pengguna
         ytWebView.evaluateJavascript("var v=document.querySelector('video'); if(v && v.paused && window.__ohoUserPaused===false){ v.play(); }", null)
     }
 
@@ -1586,100 +1719,76 @@ class MainActivity : AppCompatActivity() {
         dynView.invalidate()
     }
 
-    // === 4 MODE ROUTING KANAL: STEREO | MONO | KIRI (L->L+R) | KANAN (R->L+R) ===
+    // === 4 MODE ROUTING KANAL DI MESIN DSP ANDROID ===
     private fun updateChannelRouteUiAndApply() {
-        when (channelRouteMode) {
+        val modeToast = when (channelRouteMode) {
             0 -> {
                 btnRouteMode.text = "STEREO\nL + R"
                 btnRouteMode.background = makeRoundedBg("#0F172A", "#22D3EE", dp(7).toFloat())
                 btnRouteMode.setTextColor(Color.parseColor("#22D3EE"))
+                "Mode Kanal: STEREO (L + R)"
             }
             1 -> {
                 btnRouteMode.text = "MONO\nL + R"
                 btnRouteMode.background = makeRoundedBg("#065F46", "#34D399", dp(7).toFloat())
                 btnRouteMode.setTextColor(Color.WHITE)
+                "Mode Kanal: MONO Seimbang (L = R)"
             }
             2 -> {
                 btnRouteMode.text = "KIRI\nL ONLY"
                 btnRouteMode.background = makeRoundedBg("#1E3A8A", "#60A5FA", dp(7).toFloat())
                 btnRouteMode.setTextColor(Color.WHITE)
+                "Mode Kanal: KIRI (L Only — Kanan Dibisukan)"
             }
-            3 -> {
+            else -> {
                 btnRouteMode.text = "KANAN\nR ONLY"
                 btnRouteMode.background = makeRoundedBg("#9A3412", "#FB923C", dp(7).toFloat())
                 btnRouteMode.setTextColor(Color.WHITE)
+                "Mode Kanal: KANAN (R Only — Vokal Kiri Dibisukan)"
             }
         }
         applyChannelBoostAndRouting()
-        applyYoutubeChannelMatrix(channelRouteMode)
+        updateActiveSfxPanAndVolume()
+        updateBgmPanAndVolume()
+        Toast.makeText(this, modeToast, Toast.LENGTH_SHORT).show()
     }
 
     private fun applyChannelBoostAndRouting() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && dynamicsProcessing != null) {
-                dynamicsProcessing!!.setInputGainbyChannel(0, boostLeftDb.toFloat())
-                dynamicsProcessing!!.setInputGainbyChannel(1, boostRightDb.toFloat())
+                val (gainL, gainR) = when (channelRouteMode) {
+                    1 -> { // MONO: samakan gain L dan R
+                        val avg = (boostLeftDb + boostRightDb) / 2f
+                        Pair(avg, avg)
+                    }
+                    2 -> Pair(boostLeftDb.toFloat(), -90f) // KIRI L ONLY
+                    3 -> Pair(-90f, boostRightDb.toFloat()) // KANAN R ONLY
+                    else -> Pair(boostLeftDb.toFloat(), boostRightDb.toFloat()) // STEREO
+                }
+                dynamicsProcessing!!.setInputGainbyChannel(0, gainL)
+                dynamicsProcessing!!.setInputGainbyChannel(1, gainR)
             }
         } catch (_: Exception) {}
     }
 
-    private fun applyYoutubeChannelMatrix(mode: Int) {
-        if (!this::ytWebView.isInitialized) return
-        val js = """
-            (function() {
-                window.__ohoRouteMode = $mode;
-                window.__ohoApplyMatrix = function(m) {
-                    var v = document.querySelector('video');
-                    if (!v) return;
-                    if (!v.__ohoAudioGraph) {
-                        try {
-                            var Ctx = window.AudioContext || window.webkitAudioContext;
-                            var ctx = new Ctx();
-                            var src = ctx.createMediaElementSource(v);
-                            var splitter = ctx.createChannelSplitter(2);
-                            var gLL = ctx.createGain();
-                            var gLR = ctx.createGain();
-                            var gRL = ctx.createGain();
-                            var gRR = ctx.createGain();
-                            var merger = ctx.createChannelMerger(2);
+    private fun getChannelPanMultipliers(): Pair<Float, Float> = when (channelRouteMode) {
+        2 -> Pair(1.0f, 0.0f)
+        3 -> Pair(0.0f, 1.0f)
+        else -> Pair(1.0f, 1.0f)
+    }
 
-                            src.connect(splitter);
-                            splitter.connect(gLL, 0);
-                            splitter.connect(gLR, 0);
-                            splitter.connect(gRL, 1);
-                            splitter.connect(gRR, 1);
+    private fun updateActiveSfxPanAndVolume() {
+        val baseVol = if (isMasterMuted) 0f else (sfxVolume.coerceIn(0, 100) / 100f)
+        val (panL, panR) = getChannelPanMultipliers()
+        for (sid in activeStreams) {
+            soundPool.setVolume(sid, baseVol * panL, baseVol * panR)
+        }
+    }
 
-                            gLL.connect(merger, 0, 0);
-                            gRL.connect(merger, 0, 0);
-                            gLR.connect(merger, 0, 1);
-                            gRR.connect(merger, 0, 1);
-
-                            merger.connect(ctx.destination);
-                            v.__ohoAudioGraph = { ctx: ctx, gLL: gLL, gLR: gLR, gRL: gRL, gRR: gRR };
-                        } catch (e) {
-                            return;
-                        }
-                    }
-                    var g = v.__ohoAudioGraph;
-                    if (g.ctx.state === 'suspended') g.ctx.resume();
-                    if (m === 0) { // STEREO
-                        g.gLL.gain.value = 1.0; g.gLR.gain.value = 0.0;
-                        g.gRL.gain.value = 0.0; g.gRR.gain.value = 1.0;
-                    } else if (m === 1) { // MONO (Gabung L+R ke kedua sisi)
-                        g.gLL.gain.value = 0.5; g.gLR.gain.value = 0.5;
-                        g.gRL.gain.value = 0.5; g.gRR.gain.value = 0.5;
-                    } else if (m === 2) { // KIRI L ONLY (Kiri masuk ke L dan R)
-                        g.gLL.gain.value = 1.0; g.gLR.gain.value = 1.0;
-                        g.gRL.gain.value = 0.0; g.gRR.gain.value = 0.0;
-                    } else if (m === 3) { // KANAN R ONLY (Kanan masuk ke L dan R)
-                        g.gLL.gain.value = 0.0; g.gLR.gain.value = 0.0;
-                        g.gRL.gain.value = 1.0; g.gRR.gain.value = 1.0;
-                    }
-                };
-                window.__ohoApplyMatrix($mode);
-            })();
-        """.trimIndent()
-        ytWebView.evaluateJavascript(js, null)
+    private fun updateBgmPanAndVolume() {
+        val baseVol = if (isMasterMuted) 0f else (bgmVolume.coerceIn(0, 100) / 100f)
+        val (panL, panR) = getChannelPanMultipliers()
+        bgmPlayer?.setVolume(baseVol * panL, baseVol * panR)
     }
 
     private fun updateTimerDisplay(totalMs: Long) {
@@ -2033,7 +2142,8 @@ class MainActivity : AppCompatActivity() {
         }
         val id = soundMap[slotKey] ?: return
         val volFloat = (sfxVolume.coerceIn(0, 100) / 100f)
-        val streamId = soundPool.play(id, volFloat, volFloat, 1, 0, 1.0f)
+        val (panL, panR) = getChannelPanMultipliers()
+        val streamId = soundPool.play(id, volFloat * panL, volFloat * panR, 1, 0, 1.0f)
         if (streamId != 0) activeStreams.add(streamId)
     }
 
@@ -2088,7 +2198,8 @@ class MainActivity : AppCompatActivity() {
                     setDataSource(bgmFile.absolutePath)
                     isLooping = true
                     val v = if (isMasterMuted) 0f else (bgmVolume / 100f)
-                    setVolume(v, v)
+                    val (panL, panR) = getChannelPanMultipliers()
+                    setVolume(v * panL, v * panR)
                     prepare()
                     start()
                 }
@@ -2261,7 +2372,7 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
-    // === 24-BAND REAL-TIME SPECTRUM ANALYZER (SENSITIVITAS TINGGI + FALLBACK) ===
+    // === 24-BAND REAL-TIME SPECTRUM ANALYZER ===
     class RtaSpectrumView(context: Context) : View(context) {
         private val numBands = 24
         private val barLevels = FloatArray(numBands) { 0.06f }
