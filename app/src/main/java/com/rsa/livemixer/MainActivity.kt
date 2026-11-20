@@ -1426,7 +1426,7 @@ class MainActivity : AppCompatActivity() {
         ensureVisualizerPermissionAndStart()
     }
 
-// === ENGINE INTI YOUTUBE: ANTI-IKLAN + FULL VIDEO BOX + PITCH SHIFTER TEMPO TETAP + MONO/STEREO MATRIX ===
+// === ENGINE INTI YOUTUBE: ANTI-IKLAN + FULL VIDEO BOX + PITCH SHIFTER TEMPO TETAP + ANTI-SILENT GUARD ===
     private fun injectEarlyCoreEngine(view: WebView?) {
         val js = """
             (function() {
@@ -1546,7 +1546,7 @@ class MainActivity : AppCompatActivity() {
                     `;
                     (document.head || document.documentElement).appendChild(style);
 
-                    // 4. Granular Real-Time Pitch Shifter (Tempo Tetap 1.0x Original) + Channel Matrix
+                    // 4. Granular Real-Time Pitch Shifter (Tempo Tetap 1.0x Original, Fix Nada Naik & Turun) + Channel Matrix
                     window.__ohoPitchSteps = 0;
                     window.__ohoRouteMode = 0;
 
@@ -1616,6 +1616,9 @@ class MainActivity : AppCompatActivity() {
                                 const freq = Math.abs(1 - ratio) / bufferTime;
                                 lfo.playbackRate.value = Math.max(0.001, freq / 0.5);
                                 const dir = (1 - ratio) >= 0 ? 1 : -1;
+                                const baseOffset = dir < 0 ? bufferTime : 0.0;
+                                delayA.delayTime.value = baseOffset;
+                                delayB.delayTime.value = baseOffset;
                                 depthA.gain.value = dir;
                                 depthB.gain.value = dir;
                             }
@@ -1625,10 +1628,33 @@ class MainActivity : AppCompatActivity() {
                     window.__ohoUpdateAudioProcessor = function() {
                         const v = document.querySelector('video');
                         if (!v) return;
+
+                        const m = window.__ohoRouteMode || 0;
+                        const st = window.__ohoPitchSteps || 0;
+
+                        // Jika Nada = 0 dan Mode = STEREO (0), biarkan jalur asli tanpa penyadapan
+                        if (!v.__ohoAudioPipe && m === 0 && st === 0) {
+                            v.preservesPitch = true;
+                            v.playbackRate = 1.0;
+                            return;
+                        }
+
+                        // Jika video tidak mendukung Web Audio CORS, gunakan fallback pitchRate agar suara tidak bisu
+                        if (v.__ohoCorsBlocked) {
+                            if (st === 0) {
+                                v.preservesPitch = true;
+                                v.playbackRate = 1.0;
+                            } else {
+                                v.preservesPitch = false;
+                                v.playbackRate = Math.pow(2, st / 12);
+                            }
+                            return;
+                        }
+
                         v.preservesPitch = true;
                         v.playbackRate = 1.0;
 
-                        if (!v.__ohoAudioPipe && !v.__ohoPipeFailed) {
+                        if (!v.__ohoAudioPipe) {
                             try {
                                 const Ctx = window.AudioContext || window.webkitAudioContext;
                                 const ctx = new Ctx();
@@ -1668,16 +1694,14 @@ class MainActivity : AppCompatActivity() {
                                     dryGain: dryGain, wetGain: wetGain, pitchNode: pitchNode
                                 };
                             } catch (e) {
-                                v.__ohoPipeFailed = true;
+                                v.__ohoCorsBlocked = true;
                                 return;
                             }
                         }
 
                         const p = v.__ohoAudioPipe;
-                        if (!p) return;
                         if (p.ctx.state === 'suspended') p.ctx.resume();
 
-                        const m = window.__ohoRouteMode || 0;
                         if (m === 0) {
                             p.gLL.gain.value = 1.0; p.gLR.gain.value = 0.0;
                             p.gRL.gain.value = 0.0; p.gRR.gain.value = 1.0;
@@ -1692,7 +1716,6 @@ class MainActivity : AppCompatActivity() {
                             p.gRL.gain.value = 1.0; p.gRR.gain.value = 1.0;
                         }
 
-                        const st = window.__ohoPitchSteps || 0;
                         if (st === 0) {
                             p.dryGain.gain.value = 1.0;
                             p.wetGain.gain.value = 0.0;
