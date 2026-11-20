@@ -525,13 +525,12 @@ class MainActivity : AppCompatActivity() {
         deckHeaderRow.addView(btnSearchYt)
         ytCard.addView(deckHeaderRow)
 
-        // Tinggi layar video lebih lega (±48% layar HP, 320dp - 360dp) namun tombol bawah tetap terlihat
         val stageHeight = (screenHeightPx() * 0.48f).toInt().coerceIn(dp(320), dp(360))
         deckStageFrame = FrameLayout(this).apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, stageHeight)
         }
 
-        // Lapisan Video YouTube Full
+        // Lapisan Video YouTube Full (Deep Ad-Blocker v7.2)
         ytWebView = WebView(this).apply {
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
@@ -549,15 +548,18 @@ class MainActivity : AppCompatActivity() {
                     "doubleclick.net", "googlesyndication.com", "googleadservices.com",
                     "adservice.google", "pagead2.googlesyndication.com", "ads.youtube.com",
                     "s0.2mdn.net", "static.doubleclick.net", "pubads.g.doubleclick.net",
-                    "imasdk.googleapis.com", "securepubads.g.doubleclick.net", "tpc.googlesyndication.com"
+                    "imasdk.googleapis.com", "securepubads.g.doubleclick.net", "tpc.googlesyndication.com",
+                    "youtube.com/pagead", "youtube.com/api/stats/ads", "youtube.com/ptracking"
                 )
 
                 override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                     val url = request?.url?.toString()?.lowercase() ?: return super.shouldInterceptRequest(view, request)
                     val isAdUrl = adHosts.any { url.contains(it) } ||
-                            url.contains("/pagead/") || url.contains("/api/stats/ads") ||
-                            url.contains("/ptracking") || url.contains("ad_type=") ||
-                            url.contains("adformat=") || url.contains("&adurl=") || url.contains("/get_midroll_info")
+                            url.contains("/pagead/") || url.contains("/pcs/activeview") ||
+                            url.contains("/api/stats/ads") || url.contains("/ptracking") ||
+                            url.contains("ad_type=") || url.contains("adformat=") ||
+                            url.contains("&adurl=") || url.contains("&oad=") ||
+                            url.contains("/get_midroll_info") || url.contains("log_event?alt=json")
                     return if (isAdUrl) WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
                     else super.shouldInterceptRequest(view, request)
                 }
@@ -580,15 +582,15 @@ class MainActivity : AppCompatActivity() {
             loadUrl("https://m.youtube.com")
 
             setOnTouchListener { v, event ->
-             v.requestFocus()
-             if (event.action == MotionEvent.ACTION_DOWN) {
-                 ytWebView.evaluateJavascript("if(typeof window.__ohoUnlockAudioContext==='function'){ window.__ohoUnlockAudioContext(); }", null)
-             }
-             if (event.action == MotionEvent.ACTION_MOVE) {
-                 v.parent?.requestDisallowInterceptTouchEvent(true)
-             }
-             false
-         }
+                v.requestFocus()
+                if (event.action == MotionEvent.ACTION_DOWN) {
+                    ytWebView.evaluateJavascript("if(typeof window.__ohoUnlockAudioContext==='function'){ window.__ohoUnlockAudioContext(); }", null)
+                }
+                if (event.action == MotionEvent.ACTION_MOVE) {
+                    v.parent?.requestDisallowInterceptTouchEvent(true)
+                }
+                false
+            }
         }
         deckStageFrame.addView(ytWebView)
 
@@ -1430,12 +1432,12 @@ class MainActivity : AppCompatActivity() {
         ensureVisualizerPermissionAndStart()
     }
 
-    // === ENGINE INTI YOUTUBE: ANTI-IKLAN + FULL VIDEO BOX + COMBO PITCH SHIFTER (TEMPO TETAP + AUTO FALLBACK) ===
+    // === ENGINE INTI YOUTUBE: DEEP AD-BLOCKER v7.2 + FULL VIDEO BOX + COMBO PITCH SHIFTER ===
     private fun injectEarlyCoreEngine(view: WebView?) {
         val js = """
             (function() {
-                if (!window.__ohoEngineV71) {
-                    window.__ohoEngineV71 = true;
+                if (!window.__ohoEngineV72) {
+                    window.__ohoEngineV72 = true;
 
                     // 1. Paksa halaman selalu terlihat agar YouTube tidak auto-pause
                     try {
@@ -1443,21 +1445,54 @@ class MainActivity : AppCompatActivity() {
                         Object.defineProperty(document, 'visibilityState', { get: function() { return 'visible'; } });
                     } catch (e) {}
 
-                    // 2. Hapus data iklan sejak awal respon YouTube
-                    function stripAdKeys(obj) {
-                        if (!obj || typeof obj !== 'object') return obj;
-                        delete obj.adPlacements;
-                        delete obj.playerAds;
-                        delete obj.adSlots;
-                        delete obj.adBreakHeartbeatParams;
+                    // 2. Pembersih rekursif semua kunci iklan di dalam JSON YouTube
+                    const AD_KEYS = [
+                        'adPlacements', 'playerAds', 'adSlots', 'adBreakHeartbeatParams',
+                        'adBreakParams', 'promotedSparklesWebRenderer', 'adSlotRenderer',
+                        'inFeedAdLayoutRenderer', 'bannerPromoRenderer', 'statementBannerRenderer',
+                        'carouselAdRenderer', 'compactPromotedVideoRenderer'
+                    ];
+
+                    function deepStripAds(obj, depth) {
+                        if (!obj || typeof obj !== 'object' || (depth || 0) > 10) return obj;
+                        if (Array.isArray(obj)) {
+                            for (let i = obj.length - 1; i >= 0; i--) {
+                                const item = obj[i];
+                                if (item && typeof item === 'object') {
+                                    if (item.adSlotRenderer || item.promotedSparklesWebRenderer || item.inFeedAdLayoutRenderer) {
+                                        obj.splice(i, 1);
+                                        continue;
+                                    }
+                                    deepStripAds(item, (depth || 0) + 1);
+                                }
+                            }
+                            return obj;
+                        }
+                        for (const k of AD_KEYS) {
+                            if (k in obj) delete obj[k];
+                        }
+                        for (const key in obj) {
+                            if (Object.prototype.hasOwnProperty.call(obj, key) && typeof obj[key] === 'object') {
+                                deepStripAds(obj[key], (depth || 0) + 1);
+                            }
+                        }
                         return obj;
                     }
 
                     let _ytInitResp = window.ytInitialPlayerResponse;
                     try {
                         Object.defineProperty(window, 'ytInitialPlayerResponse', {
-                            get: function() { return stripAdKeys(_ytInitResp); },
-                            set: function(val) { _ytInitResp = stripAdKeys(val); },
+                            get: function() { return deepStripAds(_ytInitResp, 0); },
+                            set: function(val) { _ytInitResp = deepStripAds(val, 0); },
+                            configurable: true
+                        });
+                    } catch (e) {}
+
+                    let _ytInitData = window.ytInitialData;
+                    try {
+                        Object.defineProperty(window, 'ytInitialData', {
+                            get: function() { return deepStripAds(_ytInitData, 0); },
+                            set: function(val) { _ytInitData = deepStripAds(val, 0); },
                             configurable: true
                         });
                     } catch (e) {}
@@ -1466,10 +1501,10 @@ class MainActivity : AppCompatActivity() {
                     window.fetch = async function(...args) {
                         const res = await origFetch.apply(this, args);
                         const url = (typeof args[0] === 'string') ? args[0] : (args[0] && args[0].url ? args[0].url : '');
-                        if (url.includes('/youtubei/v1/player') || url.includes('/youtubei/v1/next')) {
+                        if (url.includes('/youtubei/v1/')) {
                             try {
                                 const clone = res.clone();
-                                const json = stripAdKeys(await clone.json());
+                                const json = deepStripAds(await clone.json(), 0);
                                 return new Response(JSON.stringify(json), {
                                     status: res.status, statusText: res.statusText, headers: res.headers
                                 });
@@ -1485,11 +1520,11 @@ class MainActivity : AppCompatActivity() {
                         return origXhrOpen.apply(this, arguments);
                     };
                     XMLHttpRequest.prototype.send = function() {
-                        if (this.__ohoUrl && (this.__ohoUrl.includes('/youtubei/v1/player') || this.__ohoUrl.includes('/youtubei/v1/next'))) {
+                        if (this.__ohoUrl && this.__ohoUrl.includes('/youtubei/v1/')) {
                             this.addEventListener('readystatechange', function() {
                                 if (this.readyState === 4 && this.responseText) {
                                     try {
-                                        const cleaned = JSON.stringify(stripAdKeys(JSON.parse(this.responseText)));
+                                        const cleaned = JSON.stringify(deepStripAds(JSON.parse(this.responseText), 0));
                                         Object.defineProperty(this, 'responseText', { get: function() { return cleaned; } });
                                         Object.defineProperty(this, 'response', { get: function() { return cleaned; } });
                                     } catch (e) {}
@@ -1499,7 +1534,7 @@ class MainActivity : AppCompatActivity() {
                         return origXhrSend.apply(this, arguments);
                     };
 
-                    // 3. CSS: Sembunyikan iklan & buat video melebar penuh tanpa ruang hitam kosong
+                    // 3. CSS: Sembunyikan semua elemen iklan & buat video memenuhi layar penuh
                     const style = document.createElement('style');
                     style.innerHTML = `
                         ytm-promoted-sparkles-web-renderer,
@@ -1508,7 +1543,9 @@ class MainActivity : AppCompatActivity() {
                         ytm-ad-slot-renderer,
                         ytm-in-feed-ad-layout-renderer,
                         ytm-statement-banner-renderer,
-                        .ad-container, .ytp-ad-overlay-container, .ytp-ad-message-container {
+                        ytm-banner-promo-renderer,
+                        .ad-container, .ytp-ad-overlay-container, .ytp-ad-message-container,
+                        .ytp-ad-player-overlay, .ytp-ad-player-overlay-layout {
                             display: none !important;
                         }
                         html.oho-watch-full body {
@@ -1550,7 +1587,7 @@ class MainActivity : AppCompatActivity() {
                     `;
                     (document.head || document.documentElement).appendChild(style);
 
-                    // 4. Pembuka AudioContext saat sentuhan pertama & Mode Kombinasi Otomatis (Fixed-Tempo + Auto Fallback)
+                    // 4. Pembuka AudioContext & Mode Kombinasi Otomatis (Fixed-Tempo + Auto Fallback)
                     window.__ohoPitchSteps = 0;
                     window.__ohoRouteMode = 0;
                     window.__ohoSharedCtx = null;
@@ -1731,7 +1768,6 @@ class MainActivity : AppCompatActivity() {
                         const p = v.__ohoAudioPipe;
                         if (p.ctx.state === 'suspended') p.ctx.resume();
 
-                        // Sensor sinyal: jika video bermain tapi sinyal WebAudio nol (diblokir DRM/CORS), pindah otomatis ke fallback
                         if (!v.paused && v.volume > 0.05) {
                             const buf = new Uint8Array(p.analyser.frequencyBinCount);
                             p.analyser.getByteTimeDomainData(buf);
@@ -1776,9 +1812,38 @@ class MainActivity : AppCompatActivity() {
                         }
                     };
 
-                    // 5. Loop penjaga tampilan penuh saat nonton, auto-skip iklan, & anti-auto-pause
+                    // 5. Penjaga Iklan Instan (Skip + 16x Fast-Forward) & Anti-Auto-Pause
                     let wasAd = false;
                     let prevMuted = false;
+
+                    function crushYoutubeAds() {
+                        const player = document.querySelector('.html5-video-player');
+                        const video = document.querySelector('video');
+                        const adBadge = document.querySelector('.ytp-ad-preview-container, .ytp-ad-text, .ytp-ad-visit-advertiser-button');
+                        const isAd = (player && (player.classList.contains('ad-showing') || player.classList.contains('ad-interrupting'))) || !!adBadge;
+
+                        if (isAd && video) {
+                            if (!wasAd) {
+                                prevMuted = video.muted;
+                                wasAd = true;
+                            }
+                            video.muted = true;
+                            video.playbackRate = 16.0;
+                            if (isFinite(video.duration) && video.duration > 0.2) {
+                                video.currentTime = Math.max(0, video.duration - 0.1);
+                            }
+                            const skipBtns = document.querySelectorAll('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button, .ytm-ad-skip-button, button[class*="skip"]');
+                            skipBtns.forEach(function(b) { try { b.click(); } catch(e) {} });
+                        } else if (!isAd && wasAd && video) {
+                            video.muted = prevMuted;
+                            wasAd = false;
+                            window.__ohoUpdateAudioProcessor();
+                        }
+                    }
+
+                    const obs = new MutationObserver(crushYoutubeAds);
+                    obs.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+
                     setInterval(function() {
                         const isWatchPage = window.location.pathname.includes('/watch');
                         if (isWatchPage) {
@@ -1787,20 +1852,9 @@ class MainActivity : AppCompatActivity() {
                             document.documentElement.classList.remove('oho-watch-full');
                         }
 
-                        const player = document.querySelector('.html5-video-player');
-                        const video = document.querySelector('video');
-                        const isAd = player && (player.classList.contains('ad-showing') || player.classList.contains('ad-interrupting'));
-                        if (isAd && video) {
-                            if (!wasAd) { prevMuted = video.muted; wasAd = true; }
-                            video.muted = true;
-                            if (isFinite(video.duration) && video.duration > 0) video.currentTime = video.duration;
-                            const skipBtn = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button');
-                            if (skipBtn) skipBtn.click();
-                        } else if (!isAd && wasAd && video) {
-                            video.muted = prevMuted;
-                            wasAd = false;
-                        }
+                        crushYoutubeAds();
 
+                        const video = document.querySelector('video');
                         if (video && !video.__ohoGuardAttached) {
                             video.__ohoGuardAttached = true;
                             video.__ohoOrigPause = video.pause;
@@ -1814,7 +1868,7 @@ class MainActivity : AppCompatActivity() {
                                 window.__ohoUpdateAudioProcessor();
                             });
                         }
-                    }, 250);
+                    }, 150);
                 }
             })();
         """.trimIndent()
