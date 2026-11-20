@@ -68,7 +68,7 @@ class MainActivity : AppCompatActivity() {
     private var currentMusicVolume = 85
     private var sfxVolume = 100
     private var bgmVolume = 45
-    private var pitchSteps = 0 // Rentang -5 s/d +5 (Tempo tetap 1.0x original)
+    private var pitchSteps = 0 // Rentang -5 s/d +5
 
     // Parameter Dynamic 5-Band (SUB, LOW, MID, HIGH, AIR)
     private var selectedDynBand = 0
@@ -399,7 +399,6 @@ class MainActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
 
-        // Batang Lampu LED VU Meter Stereo (L & R)
         vuMeterView = StereoLedVuView(this).apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(22)).apply {
                 bottomMargin = dp(4)
@@ -496,7 +495,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(lrCard)
         root.addView(spacer(dp(6)))
 
-        // === 3. LAYAR UTAMA TERPADU: YOUTUBE FULL & RTA DSP (3 TOMBOL RINGKAS) ===
+        // === 3. LAYAR UTAMA TERPADU: YOUTUBE FULL (±48% LAYAR) & RTA DSP ===
         ytCard = createCardPanel().apply { setPadding(dp(7), dp(6), dp(7), dp(7)) }
 
         val deckHeaderRow = LinearLayout(this).apply {
@@ -526,12 +525,13 @@ class MainActivity : AppCompatActivity() {
         deckHeaderRow.addView(btnSearchYt)
         ytCard.addView(deckHeaderRow)
 
-        val stageHeight = (screenHeightPx() * 0.34f).toInt().coerceIn(dp(220), dp(265))
+        // Tinggi layar video lebih lega (±48% layar HP, 320dp - 360dp) namun tombol bawah tetap terlihat
+        val stageHeight = (screenHeightPx() * 0.48f).toInt().coerceIn(dp(320), dp(360))
         deckStageFrame = FrameLayout(this).apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, stageHeight)
         }
 
-        // Lapisan Video YouTube Full (Anti-Iklan Sejak Awal + Pitch Shifter Tempo Tetap)
+        // Lapisan Video YouTube Full
         ytWebView = WebView(this).apply {
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
@@ -571,7 +571,7 @@ class MainActivity : AppCompatActivity() {
                     super.onPageFinished(view, url)
                     injectEarlyCoreEngine(view)
                     applyYoutubeVolume(if (isMasterMuted || isYtMuted) 0 else currentMusicVolume)
-                    applyYoutubePitchStepsFixedTempo(pitchSteps)
+                    applyYoutubePitchStepsCombo(pitchSteps)
                     applyYoutubeChannelMatrix(channelRouteMode)
                     applyYoutubeLoop(isYtLooping)
                 }
@@ -581,6 +581,9 @@ class MainActivity : AppCompatActivity() {
 
             setOnTouchListener { v, event ->
                 v.requestFocus()
+                if (event.action == MotionEvent.ACTION_DOWN) {
+                    v.evaluateJavascript("if(typeof window.__ohoUnlockAudioContext==='function'){ window.__ohoUnlockAudioContext(); }", null)
+                }
                 if (event.action == MotionEvent.ACTION_MOVE) {
                     v.parent?.requestDisallowInterceptTouchEvent(true)
                 }
@@ -589,7 +592,7 @@ class MainActivity : AppCompatActivity() {
         }
         deckStageFrame.addView(ytWebView)
 
-        // Lapisan Grafik RTA 24-Band (Semi-transparan tipis di atas video agar Chromium tidak menghentikan musik!)
+        // Lapisan Grafik RTA 24-Band (Semi-transparan tipis di atas video agar Chromium tidak menghentikan musik)
         rtaView = RtaSpectrumView(this).apply {
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
@@ -623,6 +626,7 @@ class MainActivity : AppCompatActivity() {
                 ytWebView.evaluateJavascript(
                     """
                     (function(){
+                        if(typeof window.__ohoUnlockAudioContext==='function') window.__ohoUnlockAudioContext();
                         var v=document.querySelector('video');
                         if(v){
                             if(v.paused){
@@ -668,7 +672,7 @@ class MainActivity : AppCompatActivity() {
         ytTransportRow1.addView(btnMuteYt)
         ytCard.addView(ytTransportRow1)
 
-        // Baris Kendali YouTube 2: KEY - | NADA: 0 (-5 s/d +5, Tempo Tetap Original) | KEY + | LOOP
+        // Baris Kendali YouTube 2: KEY - | NADA: 0 (-5 s/d +5 Mode Kombinasi Otomatis) | KEY + | LOOP
         val ytTransportRow2 = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
         }
@@ -681,7 +685,7 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener {
                 pitchSteps = 0
                 updatePitchUiAndApply()
-                Toast.makeText(context, "Nada dikembalikan ke asli (0) — Tempo Original", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Nada dikembalikan ke asli (0)", Toast.LENGTH_SHORT).show()
             }
         }
         val btnKeyUp = makeConsoleButton("♯ KEY +", "#1E293B", "#A855F7", "#E9D5FF", 9f).apply {
@@ -1426,14 +1430,14 @@ class MainActivity : AppCompatActivity() {
         ensureVisualizerPermissionAndStart()
     }
 
-// === ENGINE INTI YOUTUBE: ANTI-IKLAN + FULL VIDEO BOX + PITCH SHIFTER TEMPO TETAP + ANTI-SILENT GUARD ===
+    // === ENGINE INTI YOUTUBE: ANTI-IKLAN + FULL VIDEO BOX + COMBO PITCH SHIFTER (TEMPO TETAP + AUTO FALLBACK) ===
     private fun injectEarlyCoreEngine(view: WebView?) {
         val js = """
             (function() {
-                if (!window.__ohoEngineV7) {
-                    window.__ohoEngineV7 = true;
+                if (!window.__ohoEngineV71) {
+                    window.__ohoEngineV71 = true;
 
-                    // 1. Paksa halaman selalu dianggap terlihat agar YouTube tidak auto-pause
+                    // 1. Paksa halaman selalu terlihat agar YouTube tidak auto-pause
                     try {
                         Object.defineProperty(document, 'hidden', { get: function() { return false; } });
                         Object.defineProperty(document, 'visibilityState', { get: function() { return 'visible'; } });
@@ -1495,7 +1499,7 @@ class MainActivity : AppCompatActivity() {
                         return origXhrSend.apply(this, arguments);
                     };
 
-                    // 3. CSS: Sembunyikan iklan & buat pembungkus video memenuhi layar penuh tanpa menutupi kontrol sentuh
+                    // 3. CSS: Sembunyikan iklan & buat video melebar penuh tanpa ruang hitam kosong
                     const style = document.createElement('style');
                     style.innerHTML = `
                         ytm-promoted-sparkles-web-renderer,
@@ -1541,14 +1545,27 @@ class MainActivity : AppCompatActivity() {
                             max-height: 100% !important;
                             top: 0 !important;
                             left: 0 !important;
-                            object-fit: cover !important;
+                            object-fit: fill !important;
                         }
                     `;
                     (document.head || document.documentElement).appendChild(style);
 
-                    // 4. Granular Real-Time Pitch Shifter (Tempo Tetap 1.0x Original, Fix Nada Naik & Turun) + Channel Matrix
+                    // 4. Pembuka AudioContext saat sentuhan pertama & Mode Kombinasi Otomatis (Fixed-Tempo + Auto Fallback)
                     window.__ohoPitchSteps = 0;
                     window.__ohoRouteMode = 0;
+                    window.__ohoSharedCtx = null;
+
+                    window.__ohoUnlockAudioContext = function() {
+                        try {
+                            if (!window.__ohoSharedCtx) {
+                                const Ctx = window.AudioContext || window.webkitAudioContext;
+                                window.__ohoSharedCtx = new Ctx();
+                            }
+                            if (window.__ohoSharedCtx.state === 'suspended') {
+                                window.__ohoSharedCtx.resume();
+                            }
+                        } catch (e) {}
+                    };
 
                     function createGranularPitchNode(ctx) {
                         const bufferTime = 0.08;
@@ -1625,6 +1642,20 @@ class MainActivity : AppCompatActivity() {
                         };
                     }
 
+                    function applyFallbackPlaybackPitch(v, st) {
+                        if (st === 0) {
+                            v.preservesPitch = true;
+                            v.mozPreservesPitch = true;
+                            v.webkitPreservesPitch = true;
+                            v.playbackRate = 1.0;
+                        } else {
+                            v.preservesPitch = false;
+                            v.mozPreservesPitch = false;
+                            v.webkitPreservesPitch = false;
+                            v.playbackRate = Math.pow(2, st / 12);
+                        }
+                    }
+
                     window.__ohoUpdateAudioProcessor = function() {
                         const v = document.querySelector('video');
                         if (!v) return;
@@ -1632,33 +1663,29 @@ class MainActivity : AppCompatActivity() {
                         const m = window.__ohoRouteMode || 0;
                         const st = window.__ohoPitchSteps || 0;
 
-                        // Jika Nada = 0 dan Mode = STEREO (0), biarkan jalur asli tanpa penyadapan
                         if (!v.__ohoAudioPipe && m === 0 && st === 0) {
                             v.preservesPitch = true;
                             v.playbackRate = 1.0;
                             return;
                         }
 
-                        // Jika video tidak mendukung Web Audio CORS, gunakan fallback pitchRate agar suara tidak bisu
                         if (v.__ohoCorsBlocked) {
-                            if (st === 0) {
-                                v.preservesPitch = true;
-                                v.playbackRate = 1.0;
-                            } else {
-                                v.preservesPitch = false;
-                                v.playbackRate = Math.pow(2, st / 12);
-                            }
+                            applyFallbackPlaybackPitch(v, st);
                             return;
                         }
 
-                        v.preservesPitch = true;
-                        v.playbackRate = 1.0;
+                        window.__ohoUnlockAudioContext();
+                        const ctx = window.__ohoSharedCtx;
+                        if (!ctx || ctx.state !== 'running') {
+                            applyFallbackPlaybackPitch(v, st);
+                            return;
+                        }
 
                         if (!v.__ohoAudioPipe) {
                             try {
-                                const Ctx = window.AudioContext || window.webkitAudioContext;
-                                const ctx = new Ctx();
                                 const src = ctx.createMediaElementSource(v);
+                                const analyser = ctx.createAnalyser();
+                                analyser.fftSize = 64;
 
                                 const splitter = ctx.createChannelSplitter(2);
                                 const gLL = ctx.createGain();
@@ -1667,7 +1694,8 @@ class MainActivity : AppCompatActivity() {
                                 const gRR = ctx.createGain();
                                 const merger = ctx.createChannelMerger(2);
 
-                                src.connect(splitter);
+                                src.connect(analyser);
+                                analyser.connect(splitter);
                                 splitter.connect(gLL, 0);
                                 splitter.connect(gLR, 0);
                                 splitter.connect(gRL, 1);
@@ -1690,17 +1718,39 @@ class MainActivity : AppCompatActivity() {
                                 wetGain.connect(ctx.destination);
 
                                 v.__ohoAudioPipe = {
-                                    ctx: ctx, gLL: gLL, gLR: gLR, gRL: gRL, gRR: gRR,
-                                    dryGain: dryGain, wetGain: wetGain, pitchNode: pitchNode
+                                    ctx: ctx, analyser: analyser, gLL: gLL, gLR: gLR, gRL: gRL, gRR: gRR,
+                                    dryGain: dryGain, wetGain: wetGain, pitchNode: pitchNode, zeroFrames: 0
                                 };
                             } catch (e) {
                                 v.__ohoCorsBlocked = true;
+                                applyFallbackPlaybackPitch(v, st);
                                 return;
                             }
                         }
 
                         const p = v.__ohoAudioPipe;
                         if (p.ctx.state === 'suspended') p.ctx.resume();
+
+                        // Sensor sinyal: jika video bermain tapi sinyal WebAudio nol (diblokir DRM/CORS), pindah otomatis ke fallback
+                        if (!v.paused && v.volume > 0.05) {
+                            const buf = new Uint8Array(p.analyser.frequencyBinCount);
+                            p.analyser.getByteTimeDomainData(buf);
+                            let energy = 0;
+                            for (let k = 0; k < buf.length; k++) energy += Math.abs(buf[k] - 128);
+                            if (energy === 0) {
+                                p.zeroFrames++;
+                                if (p.zeroFrames > 6) {
+                                    v.__ohoCorsBlocked = true;
+                                    applyFallbackPlaybackPitch(v, st);
+                                    return;
+                                }
+                            } else {
+                                p.zeroFrames = 0;
+                            }
+                        }
+
+                        v.preservesPitch = true;
+                        v.playbackRate = 1.0;
 
                         if (m === 0) {
                             p.gLL.gain.value = 1.0; p.gLR.gain.value = 0.0;
@@ -1782,7 +1832,7 @@ class MainActivity : AppCompatActivity() {
 
             ytWebView.visibility = View.VISIBLE
             rtaView.visibility = View.GONE
-        } else { // RTA DSP (Semi-transparan tipis di atas ytWebView agar Chromium tetap memutar musik!)
+        } else { // RTA DSP (Semi-transparan tipis di atas ytWebView agar Chromium tetap memutar musik)
             btnModeRtaDsp.background = makeRoundedBg("#0284C7", "#38BDF8", dp(7).toFloat())
             btnModeRtaDsp.setTextColor(Color.WHITE)
             btnModeYtFull.background = makeRoundedBg("#1E293B", "#475569", dp(7).toFloat())
@@ -1794,7 +1844,6 @@ class MainActivity : AppCompatActivity() {
             ensureVisualizerPermissionAndStart()
         }
 
-        // Pastikan lagu tetap berputar jika tidak dijeda pengguna
         ytWebView.evaluateJavascript("var v=document.querySelector('video'); if(v && v.paused && window.__ohoUserPaused===false){ v.play(); }", null)
     }
 
@@ -1835,7 +1884,7 @@ class MainActivity : AppCompatActivity() {
         dynView.invalidate()
     }
 
-    // === 4 MODE ROUTING KANAL (DSP SISTEM + WEB AUDIO MATRIX + VU METER SYNC) ===
+    // === 4 MODE ROUTING KANAL ===
     private fun updateChannelRouteUiAndApply(showToast: Boolean = true) {
         val modeToast = when (channelRouteMode) {
             0 -> {
@@ -1963,21 +2012,27 @@ class MainActivity : AppCompatActivity() {
         btnKeyDisplay.text = label
         btnKeyDisplay.background = if (pitchSteps != 0) makeRoundedBg("#4C1D95", "#C084FC", dp(7).toFloat())
         else makeRoundedBg("#161E2E", "#64748B", dp(7).toFloat())
-        applyYoutubePitchStepsFixedTempo(pitchSteps)
+        applyYoutubePitchStepsCombo(pitchSteps)
     }
 
-    private fun applyYoutubePitchStepsFixedTempo(steps: Int) {
+    private fun applyYoutubePitchStepsCombo(steps: Int) {
         if (!this::ytWebView.isInitialized) return
         val js = """
             (function() {
                 window.__ohoPitchSteps = $steps;
-                var v = document.querySelector('video');
-                if (v) {
-                    v.preservesPitch = true;
-                    v.playbackRate = 1.0;
-                }
                 if (typeof window.__ohoUpdateAudioProcessor === 'function') {
                     window.__ohoUpdateAudioProcessor();
+                } else {
+                    var v = document.querySelector('video');
+                    if (v) {
+                        if ($steps === 0) {
+                            v.preservesPitch = true;
+                            v.playbackRate = 1.0;
+                        } else {
+                            v.preservesPitch = false;
+                            v.playbackRate = Math.pow(2, $steps / 12);
+                        }
+                    }
                 }
             })();
         """.trimIndent()
@@ -2502,9 +2557,9 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
-    // === STEREO LED VU METER (L & R) ===
+    // === STEREO LED VU METER (VU L & VU R) ===
     class StereoLedVuView(context: Context) : View(context) {
-        var routeMode = 0 // 0=STEREO, 1=MONO, 2=L ONLY, 3=R ONLY
+        var routeMode = 0
         private var levelL = 0.05f
         private var levelR = 0.05f
         private val d = context.resources.displayMetrics.density
@@ -2532,13 +2587,13 @@ class MainActivity : AppCompatActivity() {
             val rawB = ((sumOdd / (limit / 2f)) * 4.5f).coerceIn(0.03f, 1.0f)
 
             val (targetL, targetR) = when (routeMode) {
-                1 -> { // MONO: L dan R bergerak kembar identik
+                1 -> {
                     val mono = (rawA + rawB) / 2f
                     Pair(mono, mono)
                 }
-                2 -> Pair(rawA, 0.0f) // KIRI L ONLY
-                3 -> Pair(0.0f, rawB) // KANAN R ONLY
-                else -> Pair(rawA, min(1.0f, rawB * 1.08f)) // STEREO
+                2 -> Pair(rawA, 0.0f)
+                3 -> Pair(0.0f, rawB)
+                else -> Pair(rawA, min(1.0f, rawB * 1.08f))
             }
 
             levelL = max(targetL, levelL * 0.72f)
@@ -2590,7 +2645,6 @@ class MainActivity : AppCompatActivity() {
         private var lastFftTimestamp = 0L
         private val d = context.resources.displayMetrics.density
 
-        // Alpha 0xEA (~92%) agar terlihat tajam seperti hitam pekat namun Chromium tetap mendeteksi video di belakangnya
         private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.parseColor("#EA090C12"); style = Paint.Style.FILL
         }
