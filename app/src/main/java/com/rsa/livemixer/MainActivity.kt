@@ -13,6 +13,7 @@ import android.media.MediaPlayer
 import android.media.SoundPool
 import android.media.audiofx.DynamicsProcessing
 import android.media.audiofx.Equalizer
+import android.media.audiofx.PresetReverb
 import android.media.audiofx.Visualizer
 import android.net.Uri
 import android.os.Build
@@ -54,16 +55,33 @@ class MainActivity : AppCompatActivity() {
     private var isYtLooping = false
     private var isSubBassActive = false
     private var isClarityActive = false
-    private var ytSizeMode = 0
-    private var currentBank = 0 // 0 = BANK A, 1 = BANK B
+    private var isReverbActive = false
+    private var displayDeckMode = 0 // 0 = YT + RTA, 1 = YT FULL, 2 = RTA DSP, 3 = LIPAT
+    private var channelRouteMode = 0 // 0 = STEREO, 1 = L ONLY, 2 = R ONLY
+    private var activeDlmsTab = 0 // 0 = EQUALIZER, 1 = DYNAMIC, 2 = CROSSOVER, 3 = TONE & EFEK
+    private var currentBank = 0
 
-    // Parameter Volume, Gain & Pitch
-    private var masterBoostDb = 6 // 0..15 dB penguat daya ke soundcard
+    // Parameter Gain, Volume & Pitch
+    private var boostLeftDb = 6
+    private var boostRightDb = 6
     private var normalMusicVolume = 85
     private var currentMusicVolume = 85
     private var sfxVolume = 100
     private var bgmVolume = 45
-    private var pitchSteps = 0 // -2..+2 semitone
+    private var pitchSteps = 0
+
+    // Parameter Dynamic 5-Band (SUB, LOW, MID, HIGH, AIR)
+    private var selectedDynBand = 0
+    private val dynBandNames = arrayOf("SUB", "LOW", "MID", "HIGH", "AIR")
+    private val dynCutoffs = floatArrayOf(120f, 450f, 2200f, 7500f, 20000f)
+    private val dynThresholds = floatArrayOf(-12f, -10f, -10f, -12f, -14f)
+    private val dynRatios = floatArrayOf(2.5f, 2.0f, 2.0f, 2.2f, 2.5f)
+    private val dynPostGains = floatArrayOf(2.0f, 0.5f, 0.0f, 1.5f, 2.5f)
+
+    // Parameter Crossover & Limiter
+    private var hpfCutoffHz = 30f
+    private var lpfCutoffHz = 18000f
+    private var limiterThreshDb = -1.0f
 
     // Live Timer
     private var isTimerRunning = false
@@ -71,15 +89,51 @@ class MainActivity : AppCompatActivity() {
     private var timerAccumulatedMs = 0L
     private val timerHandler = Handler(Looper.getMainLooper())
 
-    // Komponen UI Utama
+    // Komponen UI
     private lateinit var tvLiveTimer: TextView
     private lateinit var btnTimerToggle: Button
-    private lateinit var ytWebView: WebView
-    private lateinit var eqView: GraphicEq10BandView
-    private lateinit var vuMeter: StereoVuMeterView
+    private lateinit var rtaView: RtaSpectrumView
+    private lateinit var seekBoostL: SeekBar
+    private lateinit var seekBoostR: SeekBar
+    private lateinit var tvBoostLVal: TextView
+    private lateinit var tvBoostRVal: TextView
+    private lateinit var btnRouteMode: Button
 
-    private lateinit var seekMasterBoost: SeekBar
-    private lateinit var tvMasterBoostVal: TextView
+    // Display Deck (YouTube + RTA dalam satu layar)
+    private lateinit var ytWebView: WebView
+    private lateinit var btnModeSplit: Button
+    private lateinit var btnModeYtFull: Button
+    private lateinit var btnModeRtaFull: Button
+    private lateinit var btnModeFold: Button
+
+    private lateinit var eqView: GraphicEq10BandView
+    private lateinit var dynView: Dynamic5BandView
+
+    // Tab Containers
+    private lateinit var tabBtnEq: Button
+    private lateinit var tabBtnDyn: Button
+    private lateinit var tabBtnXover: Button
+    private lateinit var tabBtnFx: Button
+    private lateinit var panelTabEq: LinearLayout
+    private lateinit var panelTabDyn: LinearLayout
+    private lateinit var panelTabXover: LinearLayout
+    private lateinit var panelTabFx: LinearLayout
+
+    // Kontrol Tab Dynamic
+    private val dynSelectBtns = ArrayList<Button>()
+    private lateinit var tvDynThresh: TextView
+    private lateinit var tvDynRatio: TextView
+    private lateinit var tvDynGain: TextView
+    private lateinit var btnSubBass: Button
+    private lateinit var btnClarity: Button
+
+    // Kontrol Tab Crossover & Efek
+    private lateinit var tvHpfVal: TextView
+    private lateinit var tvLpfVal: TextView
+    private lateinit var tvLimVal: TextView
+    private lateinit var btnReverbToggle: Button
+
+    // Volume & Transport
     private lateinit var seekMusicVol: SeekBar
     private lateinit var tvMusicVolPct: TextView
     private lateinit var seekSfxVol: SeekBar
@@ -94,8 +148,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnLockTone: Button
     private lateinit var btnKeyDisplay: Button
     private lateinit var btnYtLoop: Button
-    private lateinit var btnSubBass: Button
-    private lateinit var btnClarity: Button
     private lateinit var btnBankA: Button
     private lateinit var btnBankB: Button
     private lateinit var btnBgmPlayStop: Button
@@ -105,7 +157,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var knobMid: RotaryKnobView
     private lateinit var knobTreble: RotaryKnobView
 
-    // Soundboard 16 Slot (Bank A & Bank B)
+    // Soundboard 16 Slot
     private lateinit var soundPool: SoundPool
     private val soundMap = HashMap<String, Int>()
     private val activeStreams = ArrayList<Int>()
@@ -117,13 +169,14 @@ class MainActivity : AppCompatActivity() {
     private val defaultBankBLabels = arrayOf("DRUM ROLL", "TROMPET", "WADUH", "SIRINE", "HORAY", "SUSPENSE", "CLOSING", "EXTRA")
     private val defaultBankBAssets = arrayOf("gendang.mp3", "airhorn.mp3", "jangkrik.mp3", "airhorn.mp3", "applause.mp3", "intro.mp3", "intro.mp3", "ketawa.mp3")
 
-    // BGM Ngobrol Player
+    // BGM Ngobrol
     private var bgmPlayer: MediaPlayer? = null
     private var isBgmPlaying = false
 
     // Audio DSP
     private var dynamicsProcessing: DynamicsProcessing? = null
     private var fallbackEqualizer: Equalizer? = null
+    private var presetReverb: PresetReverb? = null
     private var visualizer: Visualizer? = null
 
     // 10-Band EQ Standar Pro
@@ -135,19 +188,13 @@ class MainActivity : AppCompatActivity() {
     private var toneMid = 0f
     private var toneTreble = 0f
 
-    // Picker Audio Soundboard
     private val pickSfxLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         val slot = pendingPadSlotForPicker
-        if (uri != null && slot != null) {
-            importCustomSoundToPad(slot, uri)
-        }
+        if (uri != null && slot != null) importCustomSoundToPad(slot, uri)
     }
 
-    // Picker Audio BGM Ngobrol
     private val pickBgmLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-        if (uri != null) {
-            importCustomBgmFile(uri)
-        }
+        if (uri != null) importCustomBgmFile(uri)
     }
 
     private val timerRunnable = object : Runnable {
@@ -168,15 +215,15 @@ class MainActivity : AppCompatActivity() {
         fillHex: String,
         strokeHex: String,
         textColorHex: String = "#FFFFFF",
-        textSp: Float = 10f
+        textSp: Float = 9.5f
     ): Button = Button(this).apply {
         text = label
         setTextSize(TypedValue.COMPLEX_UNIT_SP, textSp)
         typeface = Typeface.DEFAULT_BOLD
         setTextColor(Color.parseColor(textColorHex))
-        background = makeRoundedBg(fillHex, strokeHex, dp(8).toFloat())
+        background = makeRoundedBg(fillHex, strokeHex, dp(7).toFloat())
         gravity = Gravity.CENTER
-        setPadding(dp(5), 0, dp(5), 0)
+        setPadding(dp(4), 0, dp(4), 0)
         minHeight = 0
         minimumHeight = 0
         minWidth = 0
@@ -192,24 +239,24 @@ class MainActivity : AppCompatActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         restoreLastSessionState()
 
-        setupAudioDspPro()
+        setupAudioDspDlms()
         setupSoundboard16()
 
         val rootScroll = ScrollView(this).apply {
-            setBackgroundColor(Color.parseColor("#0B0E14"))
+            setBackgroundColor(Color.parseColor("#0A0D12"))
             isFillViewport = true
         }
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(10), dp(10), dp(10), dp(16))
+            setPadding(dp(9), dp(8), dp(9), dp(14))
         }
 
         // === 1. TOP MASTER HEADER & LIVE TIMER ===
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(2), 0, dp(2), dp(6))
+            setPadding(dp(2), 0, dp(2), dp(5))
         }
 
         val titleBox = LinearLayout(this).apply {
@@ -217,13 +264,12 @@ class MainActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
         titleBox.addView(TextView(this).apply {
-            text = "OHO AUDIO MIXER"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
+            text = "OHO AUDIO DLMS"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#F8FAFC"))
         })
 
-        // Baris Live Timer
         val timerRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -231,40 +277,40 @@ class MainActivity : AppCompatActivity() {
         }
         tvLiveTimer = TextView(this).apply {
             text = "00:00:00"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
             typeface = Typeface.MONOSPACE
-            setTextColor(Color.parseColor("#38BDF8"))
-            setPadding(0, 0, dp(6), 0)
+            setTextColor(Color.parseColor("#22D3EE"))
+            setPadding(0, 0, dp(5), 0)
         }
-        btnTimerToggle = makeConsoleButton("START", "#0F172A", "#38BDF8", "#38BDF8", 8.5f).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(44), dp(22)).apply { marginEnd = dp(4) }
+        btnTimerToggle = makeConsoleButton("START", "#0F172A", "#22D3EE", "#22D3EE", 8f).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(42), dp(20)).apply { marginEnd = dp(3) }
             setOnClickListener {
                 if (!isTimerRunning) {
                     isTimerRunning = true
                     timerBaseElapsed = SystemClock.elapsedRealtime()
                     text = "PAUSE"
-                    background = makeRoundedBg("#B45309", "#FBBF24", dp(6).toFloat())
+                    background = makeRoundedBg("#B45309", "#FBBF24", dp(5).toFloat())
                     setTextColor(Color.WHITE)
                     timerHandler.post(timerRunnable)
                 } else {
                     isTimerRunning = false
                     timerAccumulatedMs += (SystemClock.elapsedRealtime() - timerBaseElapsed)
                     text = "START"
-                    background = makeRoundedBg("#0F172A", "#38BDF8", dp(6).toFloat())
-                    setTextColor(Color.parseColor("#38BDF8"))
+                    background = makeRoundedBg("#0F172A", "#22D3EE", dp(5).toFloat())
+                    setTextColor(Color.parseColor("#22D3EE"))
                 }
             }
         }
-        val btnTimerReset = makeConsoleButton("RST", "#1E293B", "#475569", "#94A3B8", 8.5f).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(34), dp(22))
+        val btnTimerReset = makeConsoleButton("RST", "#1E293B", "#475569", "#94A3B8", 8f).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(30), dp(20))
             setOnClickListener {
                 isTimerRunning = false
                 timerAccumulatedMs = 0L
                 timerBaseElapsed = SystemClock.elapsedRealtime()
                 updateTimerDisplay(0L)
                 btnTimerToggle.text = "START"
-                btnTimerToggle.background = makeRoundedBg("#0F172A", "#38BDF8", dp(6).toFloat())
-                btnTimerToggle.setTextColor(Color.parseColor("#38BDF8"))
+                btnTimerToggle.background = makeRoundedBg("#0F172A", "#22D3EE", dp(5).toFloat())
+                btnTimerToggle.setTextColor(Color.parseColor("#22D3EE"))
             }
         }
         timerRow.addView(tvLiveTimer)
@@ -272,28 +318,28 @@ class MainActivity : AppCompatActivity() {
         timerRow.addView(btnTimerReset)
         titleBox.addView(timerRow)
 
-        btnEqToggle = makeConsoleButton("EQ ON", "#10B981", "#34D399", "#FFFFFF", 9.5f).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(52), dp(34)).apply { marginEnd = dp(4) }
+        btnEqToggle = makeConsoleButton("DSP ON", "#10B981", "#34D399", "#FFFFFF", 9f).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(50), dp(32)).apply { marginEnd = dp(4) }
             setOnClickListener {
                 isEqEnabled = !isEqEnabled
                 applyDspEnabled(isEqEnabled)
-                text = if (isEqEnabled) "EQ ON" else "BYPASS"
-                background = if (isEqEnabled) makeRoundedBg("#10B981", "#34D399", dp(8).toFloat())
-                else makeRoundedBg("#334155", "#64748B", dp(8).toFloat())
+                text = if (isEqEnabled) "DSP ON" else "BYPASS"
+                background = if (isEqEnabled) makeRoundedBg("#10B981", "#34D399", dp(7).toFloat())
+                else makeRoundedBg("#334155", "#64748B", dp(7).toFloat())
             }
         }
 
-        val btnSave = makeConsoleButton("SAVE", "#1E293B", "#475569", "#E2E8F0", 9.5f).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(46), dp(34)).apply { marginEnd = dp(4) }
+        val btnSave = makeConsoleButton("SAVE", "#1E293B", "#475569", "#E2E8F0", 9f).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(44), dp(32)).apply { marginEnd = dp(4) }
             setOnClickListener {
                 saveCustomPreset()
                 saveLastSessionState()
-                Toast.makeText(context, "Setelan 10-Band EQ tersimpan ke CUSTOM!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Preset DLMS disimpan ke CUSTOM!", Toast.LENGTH_SHORT).show()
             }
         }
 
-        btnMuteAll = makeConsoleButton("MUTE", "#1E293B", "#F59E0B", "#FBBF24", 9.5f).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(50), dp(34)).apply { marginEnd = dp(4) }
+        btnMuteAll = makeConsoleButton("MUTE", "#1E293B", "#F59E0B", "#FBBF24", 9f).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(48), dp(32)).apply { marginEnd = dp(4) }
             setOnClickListener {
                 isMasterMuted = !isMasterMuted
                 if (isMasterMuted) {
@@ -301,25 +347,25 @@ class MainActivity : AppCompatActivity() {
                     applyYoutubeVolume(0)
                     bgmPlayer?.setVolume(0f, 0f)
                     text = "MUTED"
-                    background = makeRoundedBg("#D97706", "#FDE047", dp(8).toFloat())
+                    background = makeRoundedBg("#D97706", "#FDE047", dp(7).toFloat())
                     setTextColor(Color.WHITE)
                 } else {
                     applyYoutubeVolume(if (isYtMuted) 0 else currentMusicVolume)
                     val bVol = bgmVolume / 100f
                     bgmPlayer?.setVolume(bVol, bVol)
                     text = "MUTE"
-                    background = makeRoundedBg("#1E293B", "#F59E0B", dp(8).toFloat())
+                    background = makeRoundedBg("#1E293B", "#F59E0B", dp(7).toFloat())
                     setTextColor(Color.parseColor("#FBBF24"))
                 }
             }
         }
 
-        val btnExit = makeConsoleButton("EXIT", "#450A0A", "#EF4444", "#FCA5A5", 9.5f).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(46), dp(34))
+        val btnExit = makeConsoleButton("EXIT", "#450A0A", "#EF4444", "#FCA5A5", 9f).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(44), dp(32))
             setOnClickListener {
                 AlertDialog.Builder(this@MainActivity)
-                    .setTitle("Keluar OHO AUDIO MIXER?")
-                    .setMessage("Semua pengaturan 10-Band EQ, Master Boost, dan Volume akan disimpan otomatis.")
+                    .setTitle("Keluar OHO AUDIO DLMS?")
+                    .setMessage("Semua pengaturan EQ, Dynamic, Crossover, dan Volume akan disimpan otomatis.")
                     .setPositiveButton("KELUAR") { _, _ ->
                         saveLastSessionState()
                         stopAllSounds()
@@ -338,60 +384,153 @@ class MainActivity : AppCompatActivity() {
         header.addView(btnExit)
         root.addView(header)
 
-        // === STEREO LED VU METER ===
-        val vuBarRow = LinearLayout(this).apply {
+        // === 2. MASTER L & R OUTPUT BOOST + STEREO/L/R ROUTER ===
+        val lrCard = createCardPanel().apply { setPadding(dp(8), dp(5), dp(8), dp(5)) }
+        val lrRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(2), 0, dp(2), dp(6))
-        }
-        vuBarRow.addView(TextView(this).apply {
-            text = "OUT VU"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 8.5f)
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.parseColor("#94A3B8"))
-            setPadding(0, 0, dp(6), 0)
-        })
-        vuMeter = StereoVuMeterView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(0, dp(13), 1f)
-        }
-        vuBarRow.addView(vuMeter)
-        root.addView(vuBarRow)
-
-        // === 2. YOUTUBE KARAOKE PLAYER (NO ADS) & PITCH / TRANSPORT BAR ===
-        val ytCard = createCardPanel().apply { setPadding(dp(8), dp(8), dp(8), dp(8)) }
-        val ytBar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(2), 0, dp(2), dp(6))
         }
 
-        ytBar.addView(TextView(this).apply {
-            text = "▶ YOUTUBE (NO ADS)"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.parseColor("#F87171"))
+        val lrSlidersCol = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        })
+        }
 
-        val btnSearchYt = makeConsoleButton("🔍 CARI LAGU", "#DC2626", "#F87171", "#FFFFFF", 9.5f).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(30)).apply {
-                marginEnd = dp(6)
-            }
+        val rowL = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        rowL.addView(TextView(this).apply {
+            text = "L"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#22D3EE"))
+            layoutParams = LinearLayout.LayoutParams(dp(14), LinearLayout.LayoutParams.WRAP_CONTENT)
+        })
+        seekBoostL = SeekBar(this).apply {
+            max = 15
+            progress = boostLeftDb
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
+                    boostLeftDb = p
+                    tvBoostLVal.text = "+${p}dB"
+                    applyChannelBoostAndRouting()
+                }
+                override fun onStartTrackingTouch(sb: SeekBar?) {}
+                override fun onStopTrackingTouch(sb: SeekBar?) { saveLastSessionState() }
+            })
+        }
+        tvBoostLVal = TextView(this).apply {
+            text = "+${boostLeftDb}dB"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
+            typeface = Typeface.MONOSPACE
+            setTextColor(Color.parseColor("#34D399"))
+            layoutParams = LinearLayout.LayoutParams(dp(36), LinearLayout.LayoutParams.WRAP_CONTENT)
+        }
+        rowL.addView(seekBoostL)
+        rowL.addView(tvBoostLVal)
+
+        val rowR = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        rowR.addView(TextView(this).apply {
+            text = "R"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#F59E0B"))
+            layoutParams = LinearLayout.LayoutParams(dp(14), LinearLayout.LayoutParams.WRAP_CONTENT)
+        })
+        seekBoostR = SeekBar(this).apply {
+            max = 15
+            progress = boostRightDb
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
+                    boostRightDb = p
+                    tvBoostRVal.text = "+${p}dB"
+                    applyChannelBoostAndRouting()
+                }
+                override fun onStartTrackingTouch(sb: SeekBar?) {}
+                override fun onStopTrackingTouch(sb: SeekBar?) { saveLastSessionState() }
+            })
+        }
+        tvBoostRVal = TextView(this).apply {
+            text = "+${boostRightDb}dB"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
+            typeface = Typeface.MONOSPACE
+            setTextColor(Color.parseColor("#34D399"))
+            layoutParams = LinearLayout.LayoutParams(dp(36), LinearLayout.LayoutParams.WRAP_CONTENT)
+        }
+        rowR.addView(seekBoostR)
+        rowR.addView(tvBoostRVal)
+
+        lrSlidersCol.addView(rowL)
+        lrSlidersCol.addView(rowR)
+
+        btnRouteMode = makeConsoleButton("STEREO\nL + R", "#0F172A", "#22D3EE", "#22D3EE", 8.5f).apply {
+            maxLines = 2
+            layoutParams = LinearLayout.LayoutParams(dp(58), dp(40)).apply { marginStart = dp(6) }
             setOnClickListener {
+                channelRouteMode = (channelRouteMode + 1) % 3
+                updateChannelRouteUiAndApply()
+            }
+        }
+
+        lrRow.addView(lrSlidersCol)
+        lrRow.addView(btnRouteMode)
+        lrCard.addView(lrRow)
+        root.addView(lrCard)
+        root.addView(spacer(dp(6)))
+
+        // === 3. SATU LAYAR TERPADU: YOUTUBE KARAOKE + GRAFIK RTA 24-BAND ===
+        val ytCard = createCardPanel().apply { setPadding(dp(7), dp(6), dp(7), dp(7)) }
+
+        // Baris Pemilih Tampilan (YT+RTA | YT FULL | RTA DSP | LIPAT) + Cari Lagu
+        val deckHeaderRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, dp(5))
+        }
+
+        btnModeSplit = makeConsoleButton("YT+RTA", "#0284C7", "#38BDF8", "#FFFFFF", 8.5f).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(26), 1.05f).apply { marginEnd = dp(3) }
+            setOnClickListener { setDisplayDeckMode(0) }
+        }
+        btnModeYtFull = makeConsoleButton("YT FULL", "#1E293B", "#475569", "#CBD5E1", 8.5f).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(26), 1f).apply { marginEnd = dp(3) }
+            setOnClickListener { setDisplayDeckMode(1) }
+        }
+        btnModeRtaFull = makeConsoleButton("RTA DSP", "#1E293B", "#475569", "#CBD5E1", 8.5f).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(26), 1f).apply { marginEnd = dp(3) }
+            setOnClickListener { setDisplayDeckMode(2) }
+        }
+        btnModeFold = makeConsoleButton("LIPAT", "#1E293B", "#475569", "#94A3B8", 8.5f).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(26), 0.8f).apply { marginEnd = dp(4) }
+            setOnClickListener { setDisplayDeckMode(3) }
+        }
+
+        val btnSearchYt = makeConsoleButton("🔍 CARI", "#DC2626", "#F87171", "#FFFFFF", 8.5f).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(56), dp(26))
+            setOnClickListener {
+                if (displayDeckMode == 2 || displayDeckMode == 3) {
+                    setDisplayDeckMode(0)
+                }
                 ytWebView.loadUrl("https://m.youtube.com/results?search_query=karaoke+dangdut+campursari+lirik")
             }
         }
 
-        val btnResizeYt = makeConsoleButton("PERBESAR / LIPAT", "#1E293B", "#475569", "#E2E8F0", 9f).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(30))
-        }
+        deckHeaderRow.addView(btnModeSplit)
+        deckHeaderRow.addView(btnModeYtFull)
+        deckHeaderRow.addView(btnModeRtaFull)
+        deckHeaderRow.addView(btnModeFold)
+        deckHeaderRow.addView(btnSearchYt)
+        ytCard.addView(deckHeaderRow)
 
-        ytBar.addView(btnSearchYt)
-        ytBar.addView(btnResizeYt)
-        ytCard.addView(ytBar)
-
+        // Layar YouTube (No Ads)
         ytWebView = WebView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(235))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(175))
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
@@ -460,201 +599,118 @@ class MainActivity : AppCompatActivity() {
         }
         ytCard.addView(ytWebView)
 
-        // Baris 1 Kendali YouTube: -10s | PLAY/PAUSE | +10s | MUTE YT
+        // Grafik RTA 24-Band Real-Time Spectrum Analyzer (Menyatu dalam satu layar dengan YouTube)
+        rtaView = RtaSpectrumView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(64)).apply {
+                topMargin = dp(4)
+            }
+        }
+        ytCard.addView(rtaView)
+
+        // Baris Kendali YouTube 1: -10s | PLAY/PAUSE | +10s | MUTE YT
         val ytTransportRow1 = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(6), 0, dp(4))
+            setPadding(0, dp(5), 0, dp(4))
         }
-
-        val btnRewind = makeConsoleButton("⏪ -10s", "#1E293B", "#475569", "#E2E8F0", 9.5f).apply {
-            layoutParams = LinearLayout.LayoutParams(0, dp(32), 1f).apply { marginEnd = dp(4) }
+        val btnRewind = makeConsoleButton("⏪ -10s", "#1E293B", "#475569", "#E2E8F0", 9f).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(30), 1f).apply { marginEnd = dp(4) }
             setOnClickListener {
                 ytWebView.evaluateJavascript("var v=document.querySelector('video'); if(v){ v.currentTime=Math.max(0,v.currentTime-10); }", null)
             }
         }
-
-        val btnPlayPause = makeConsoleButton("⏯ PLAY/PAUSE", "#0F172A", "#38BDF8", "#38BDF8", 9.5f).apply {
-            layoutParams = LinearLayout.LayoutParams(0, dp(32), 1.3f).apply { marginEnd = dp(4) }
+        val btnPlayPause = makeConsoleButton("⏯ PLAY/PAUSE", "#0F172A", "#38BDF8", "#38BDF8", 9f).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(30), 1.3f).apply { marginEnd = dp(4) }
             setOnClickListener {
                 ytWebView.evaluateJavascript("var v=document.querySelector('video'); if(v){ if(v.paused) v.play(); else v.pause(); }", null)
             }
         }
-
-        val btnForward = makeConsoleButton("+10s ⏩", "#1E293B", "#475569", "#E2E8F0", 9.5f).apply {
-            layoutParams = LinearLayout.LayoutParams(0, dp(32), 1f).apply { marginEnd = dp(4) }
+        val btnForward = makeConsoleButton("+10s ⏩", "#1E293B", "#475569", "#E2E8F0", 9f).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(30), 1f).apply { marginEnd = dp(4) }
             setOnClickListener {
                 ytWebView.evaluateJavascript("var v=document.querySelector('video'); if(v && isFinite(v.duration)){ v.currentTime=Math.min(v.duration,v.currentTime+10); }", null)
             }
         }
-
-        btnMuteYt = makeConsoleButton("🔇 MUTE YT", "#1E293B", "#EF4444", "#FCA5A5", 9.5f).apply {
-            layoutParams = LinearLayout.LayoutParams(0, dp(32), 1.1f)
+        btnMuteYt = makeConsoleButton("🔇 MUTE YT", "#1E293B", "#EF4444", "#FCA5A5", 9f).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(30), 1.1f)
             setOnClickListener {
                 isYtMuted = !isYtMuted
                 if (isYtMuted) {
                     applyYoutubeVolume(0)
                     text = "🔇 YT MUTED"
-                    background = makeRoundedBg("#B91C1C", "#FCA5A5", dp(8).toFloat())
+                    background = makeRoundedBg("#B91C1C", "#FCA5A5", dp(7).toFloat())
                     setTextColor(Color.WHITE)
                 } else {
                     applyYoutubeVolume(if (isMasterMuted) 0 else currentMusicVolume)
                     text = "🔇 MUTE YT"
-                    background = makeRoundedBg("#1E293B", "#EF4444", dp(8).toFloat())
+                    background = makeRoundedBg("#1E293B", "#EF4444", dp(7).toFloat())
                     setTextColor(Color.parseColor("#FCA5A5"))
                 }
             }
         }
-
         ytTransportRow1.addView(btnRewind)
         ytTransportRow1.addView(btnPlayPause)
         ytTransportRow1.addView(btnForward)
         ytTransportRow1.addView(btnMuteYt)
         ytCard.addView(ytTransportRow1)
 
-        // Baris 2 Kendali YouTube: KEY - | KEY 0 (Reset) | KEY + | LOOP
+        // Baris Kendali YouTube 2: KEY - | NADA: 0 | KEY + | LOOP
         val ytTransportRow2 = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
         }
-
-        val btnKeyDown = makeConsoleButton("♭ KEY -", "#1E293B", "#A855F7", "#E9D5FF", 9.5f).apply {
-            layoutParams = LinearLayout.LayoutParams(0, dp(32), 1f).apply { marginEnd = dp(4) }
-            setOnClickListener {
-                if (pitchSteps > -2) {
-                    pitchSteps--
-                    updatePitchUiAndApply()
-                }
-            }
+        val btnKeyDown = makeConsoleButton("♭ KEY -", "#1E293B", "#A855F7", "#E9D5FF", 9f).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(30), 1f).apply { marginEnd = dp(4) }
+            setOnClickListener { if (pitchSteps > -2) { pitchSteps--; updatePitchUiAndApply() } }
         }
-
-        btnKeyDisplay = makeConsoleButton("NADA: 0", "#161E2E", "#64748B", "#F8FAFC", 9.5f).apply {
-            layoutParams = LinearLayout.LayoutParams(0, dp(32), 1.1f).apply { marginEnd = dp(4) }
-            setOnClickListener {
-                pitchSteps = 0
-                updatePitchUiAndApply()
-                Toast.makeText(context, "Nada dikembalikan ke asli (0)", Toast.LENGTH_SHORT).show()
-            }
+        btnKeyDisplay = makeConsoleButton("NADA: 0", "#161E2E", "#64748B", "#F8FAFC", 9f).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(30), 1.1f).apply { marginEnd = dp(4) }
+            setOnClickListener { pitchSteps = 0; updatePitchUiAndApply() }
         }
-
-        val btnKeyUp = makeConsoleButton("♯ KEY +", "#1E293B", "#A855F7", "#E9D5FF", 9.5f).apply {
-            layoutParams = LinearLayout.LayoutParams(0, dp(32), 1f).apply { marginEnd = dp(4) }
-            setOnClickListener {
-                if (pitchSteps < 2) {
-                    pitchSteps++
-                    updatePitchUiAndApply()
-                }
-            }
+        val btnKeyUp = makeConsoleButton("♯ KEY +", "#1E293B", "#A855F7", "#E9D5FF", 9f).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(30), 1f).apply { marginEnd = dp(4) }
+            setOnClickListener { if (pitchSteps < 2) { pitchSteps++; updatePitchUiAndApply() } }
         }
-
-        btnYtLoop = makeConsoleButton("🔁 LOOP", "#1E293B", "#475569", "#94A3B8", 9.5f).apply {
-            layoutParams = LinearLayout.LayoutParams(0, dp(32), 1f)
+        btnYtLoop = makeConsoleButton("🔁 LOOP", "#1E293B", "#475569", "#94A3B8", 9f).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(30), 1f)
             setOnClickListener {
                 isYtLooping = !isYtLooping
                 applyYoutubeLoop(isYtLooping)
                 if (isYtLooping) {
-                    background = makeRoundedBg("#065F46", "#34D399", dp(8).toFloat())
+                    background = makeRoundedBg("#065F46", "#34D399", dp(7).toFloat())
                     setTextColor(Color.WHITE)
                 } else {
-                    background = makeRoundedBg("#1E293B", "#475569", dp(8).toFloat())
+                    background = makeRoundedBg("#1E293B", "#475569", dp(7).toFloat())
                     setTextColor(Color.parseColor("#94A3B8"))
                 }
             }
         }
-
         ytTransportRow2.addView(btnKeyDown)
         ytTransportRow2.addView(btnKeyDisplay)
         ytTransportRow2.addView(btnKeyUp)
         ytTransportRow2.addView(btnYtLoop)
         ytCard.addView(ytTransportRow2)
 
-        btnResizeYt.setOnClickListener {
-            ytSizeMode = (ytSizeMode + 1) % 3
-            val lp = ytWebView.layoutParams
-            when (ytSizeMode) {
-                0 -> { ytWebView.visibility = View.VISIBLE; lp.height = dp(235); btnResizeYt.text = "PERBESAR / LIPAT" }
-                1 -> { ytWebView.visibility = View.VISIBLE; lp.height = dp(370); btnResizeYt.text = "LIPAT VIDEO" }
-                2 -> { ytWebView.visibility = View.GONE; btnResizeYt.text = "BUKA VIDEO" }
-            }
-            ytWebView.layoutParams = lp
-        }
-
         root.addView(ytCard)
-        root.addView(spacer(dp(8)))
+        root.addView(spacer(dp(6)))
 
-        // === 3. MASTER BOOST + DUAL CHANNEL FADER (MUSIC & SFX + SMART DUCKING) ===
-        val volCard = createCardPanel().apply { setPadding(dp(10), dp(8), dp(10), dp(8)) }
+        // === 4. DUAL VOLUME FADER (MUSIC & SFX + SMART DUCKING) ===
+        val volCard = createCardPanel().apply { setPadding(dp(8), dp(6), dp(8), dp(6)) }
 
-        // Baris 1: MASTER BOOST (Penguat Daya ke Soundcard)
-        val boostRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, dp(6))
-        }
-        boostRow.addView(TextView(this).apply {
-            text = "PWR BOOST"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.parseColor("#10B981"))
-            layoutParams = LinearLayout.LayoutParams(dp(70), LinearLayout.LayoutParams.WRAP_CONTENT)
-        })
-        seekMasterBoost = SeekBar(this).apply {
-            max = 15
-            progress = masterBoostDb
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                marginStart = dp(4); marginEnd = dp(4)
-            }
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
-                    masterBoostDb = p
-                    tvMasterBoostVal.text = "+${p}dB"
-                    applyMasterBoostGain(p.toFloat())
-                }
-                override fun onStartTrackingTouch(sb: SeekBar?) {}
-                override fun onStopTrackingTouch(sb: SeekBar?) { saveLastSessionState() }
-            })
-        }
-        tvMasterBoostVal = TextView(this).apply {
-            text = "+${masterBoostDb}dB"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.parseColor("#34D399"))
-            gravity = Gravity.END
-            layoutParams = LinearLayout.LayoutParams(dp(42), LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                marginEnd = dp(6)
-            }
-        }
-        boostRow.addView(seekMasterBoost)
-        boostRow.addView(tvMasterBoostVal)
-        boostRow.addView(TextView(this).apply {
-            text = "LIMITER ON"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 8.5f)
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.parseColor("#34D399"))
-            gravity = Gravity.CENTER
-            background = makeRoundedBg("#064E3B", "#10B981", dp(6).toFloat())
-            setPadding(dp(6), dp(4), dp(6), dp(4))
-            layoutParams = LinearLayout.LayoutParams(dp(82), LinearLayout.LayoutParams.WRAP_CONTENT)
-        })
-        volCard.addView(boostRow)
-
-        // Baris 2: MUSIC VOL + SMART DUCKING
         val musicVolRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, dp(6))
+            setPadding(0, 0, 0, dp(4))
         }
         musicVolRow.addView(TextView(this).apply {
             text = "MUSIC VOL"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#38BDF8"))
-            layoutParams = LinearLayout.LayoutParams(dp(70), LinearLayout.LayoutParams.WRAP_CONTENT)
+            layoutParams = LinearLayout.LayoutParams(dp(64), LinearLayout.LayoutParams.WRAP_CONTENT)
         })
         seekMusicVol = SeekBar(this).apply {
             max = 100
             progress = normalMusicVolume
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                marginStart = dp(4); marginEnd = dp(4)
-            }
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
                     currentMusicVolume = p
@@ -668,23 +724,23 @@ class MainActivity : AppCompatActivity() {
         }
         tvMusicVolPct = TextView(this).apply {
             text = "$normalMusicVolume%"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#E2E8F0"))
             gravity = Gravity.END
-            layoutParams = LinearLayout.LayoutParams(dp(36), LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(34), LinearLayout.LayoutParams.WRAP_CONTENT).apply {
                 marginEnd = dp(6)
             }
         }
-        btnDucking = makeConsoleButton("DUCKING", "#1E293B", "#475569", "#FFFFFF", 9.5f).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(82), dp(30))
+        btnDucking = makeConsoleButton("DUCKING", "#1E293B", "#475569", "#FFFFFF", 9f).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(74), dp(28))
             setOnClickListener {
                 isDucking = !isDucking
                 val startVol = seekMusicVol.progress
                 val targetVol = if (isDucking) (normalMusicVolume * 0.40f).toInt().coerceAtLeast(10) else normalMusicVolume
                 animateMusicVolumeFade(startVol, targetVol)
-                background = if (isDucking) makeRoundedBg("#D97706", "#FBBF24", dp(8).toFloat())
-                else makeRoundedBg("#1E293B", "#475569", dp(8).toFloat())
+                background = if (isDucking) makeRoundedBg("#D97706", "#FBBF24", dp(7).toFloat())
+                else makeRoundedBg("#1E293B", "#475569", dp(7).toFloat())
             }
         }
         musicVolRow.addView(seekMusicVol)
@@ -692,24 +748,21 @@ class MainActivity : AppCompatActivity() {
         musicVolRow.addView(btnDucking)
         volCard.addView(musicVolRow)
 
-        // Baris 3: SFX VOL (Independent Soundboard)
         val sfxVolRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
         sfxVolRow.addView(TextView(this).apply {
             text = "SFX VOL"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#F59E0B"))
-            layoutParams = LinearLayout.LayoutParams(dp(70), LinearLayout.LayoutParams.WRAP_CONTENT)
+            layoutParams = LinearLayout.LayoutParams(dp(64), LinearLayout.LayoutParams.WRAP_CONTENT)
         })
         seekSfxVol = SeekBar(this).apply {
             max = 100
             progress = sfxVolume
-            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                marginStart = dp(4); marginEnd = dp(4)
-            }
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
                     sfxVolume = p
@@ -723,48 +776,76 @@ class MainActivity : AppCompatActivity() {
         }
         tvSfxVolPct = TextView(this).apply {
             text = "$sfxVolume%"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#E2E8F0"))
             gravity = Gravity.END
-            layoutParams = LinearLayout.LayoutParams(dp(36), LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(34), LinearLayout.LayoutParams.WRAP_CONTENT).apply {
                 marginEnd = dp(6)
             }
         }
         sfxVolRow.addView(seekSfxVol)
         sfxVolRow.addView(tvSfxVolPct)
         sfxVolRow.addView(TextView(this).apply {
-            text = "SFX 100%"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 8.5f)
+            text = "INDEPENDENT"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 8f)
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#64748B"))
             gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(dp(82), LinearLayout.LayoutParams.WRAP_CONTENT)
+            layoutParams = LinearLayout.LayoutParams(dp(74), LinearLayout.LayoutParams.WRAP_CONTENT)
         })
         volCard.addView(sfxVolRow)
 
         root.addView(volCard)
-        root.addView(spacer(dp(8)))
+        root.addView(spacer(dp(6)))
 
-        // === 4. 10-BAND PHYSICAL FADER EQ + SUB-BASS / CLARITY + TONE LOCK ===
-        val eqCard = createCardPanel().apply { setPadding(dp(8), dp(8), dp(8), dp(10)) }
+        // === 5. DLMS 4-TAB ENGINE (EQUALIZER | DYNAMIC | CROSSOVER | TONE & EFEK) ===
+        val dlmsMainCard = createCardPanel().apply { setPadding(dp(8), dp(7), dp(8), dp(8)) }
 
-        val eqHeaderRow = LinearLayout(this).apply {
+        val tabBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 0, 0, dp(6))
+        }
+        tabBtnEq = makeConsoleButton("EQUALIZER", "#0284C7", "#38BDF8", "#FFFFFF", 9f).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(30), 1f).apply { marginEnd = dp(4) }
+            setOnClickListener { switchDlmsTab(0) }
+        }
+        tabBtnDyn = makeConsoleButton("DYNAMIC", "#1E293B", "#475569", "#94A3B8", 9f).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(30), 1f).apply { marginEnd = dp(4) }
+            setOnClickListener { switchDlmsTab(1) }
+        }
+        tabBtnXover = makeConsoleButton("CROSSOVER", "#1E293B", "#475569", "#94A3B8", 9f).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(30), 1f).apply { marginEnd = dp(4) }
+            setOnClickListener { switchDlmsTab(2) }
+        }
+        tabBtnFx = makeConsoleButton("TONE & EFEK", "#1E293B", "#475569", "#94A3B8", 9f).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(30), 1f)
+            setOnClickListener { switchDlmsTab(3) }
+        }
+        tabBar.addView(tabBtnEq)
+        tabBar.addView(tabBtnDyn)
+        tabBar.addView(tabBtnXover)
+        tabBar.addView(tabBtnFx)
+        dlmsMainCard.addView(tabBar)
+
+        // --- TAB 0: 10-BAND GRAPHIC EQ ---
+        panelTabEq = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+        val eqTopRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(2), 0, dp(2), dp(6))
+            setPadding(dp(2), 0, dp(2), dp(4))
         }
-        eqHeaderRow.addView(TextView(this).apply {
-            text = "10-BAND GRAPHIC EQ"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
+        eqTopRow.addView(TextView(this).apply {
+            text = "10-BAND GRAPHIC EQ (GESER FADER)"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#38BDF8"))
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
-
-        val btnFlatReset = makeConsoleButton("FLAT 0dB", "#1E293B", "#64748B", "#CBD5E1", 9f).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(28)).apply {
-                marginEnd = dp(5)
+        val btnFlatReset = makeConsoleButton("FLAT 0dB", "#1E293B", "#64748B", "#CBD5E1", 8.5f).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(26)).apply {
+                marginEnd = dp(4)
             }
             setOnClickListener {
                 if (isToneLocked) {
@@ -777,42 +858,38 @@ class MainActivity : AppCompatActivity() {
                 applyAllBands10()
                 eqView.invalidate()
                 saveLastSessionState()
-                Toast.makeText(context, "Semua 10 Band & Tone di-reset ke 0 dB", Toast.LENGTH_SHORT).show()
             }
         }
-
         btnLockTone = makeConsoleButton(
-            if (isToneLocked) "🔒 TERKUNCI" else "🔓 UNLOCKED",
+            if (isToneLocked) "🔒 TERKUNCI" else "🔓 UNLOCK",
             if (isToneLocked) "#B91C1C" else "#1E293B",
             if (isToneLocked) "#F87171" else "#38BDF8",
             "#FFFFFF",
-            9f
+            8.5f
         ).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(28))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(26))
             setOnClickListener {
                 isToneLocked = !isToneLocked
                 applyLockUiState()
                 saveLastSessionState()
             }
         }
-        eqHeaderRow.addView(btnFlatReset)
-        eqHeaderRow.addView(btnLockTone)
-        eqCard.addView(eqHeaderRow)
+        eqTopRow.addView(btnFlatReset)
+        eqTopRow.addView(btnLockTone)
+        panelTabEq.addView(eqTopRow)
 
-        // 10-Band Vertical Physical Faders + Angka dB
         eqView = GraphicEq10BandView(this, freqLabels10, currentGains10) { bandIdx, gainDb ->
             currentGains10[bandIdx] = gainDb
             applySingleBandCalculated10(bandIdx)
             saveLastSessionState()
         }.apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(168))
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(158))
         }
-        eqCard.addView(eqView)
+        panelTabEq.addView(eqView)
 
-        // Baris Preset 10-Band
         val presetRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(8), 0, dp(6))
+            setPadding(0, dp(6), 0, 0)
         }
         val presets10 = listOf(
             "DANGDUT" to floatArrayOf(6.0f, 5.5f, 3.5f, -1.0f, -2.5f, -2.0f, 1.5f, 3.5f, 4.5f, 5.0f),
@@ -821,13 +898,13 @@ class MainActivity : AppCompatActivity() {
             "CUSTOM" to loadCustomPreset()
         )
         presets10.forEachIndexed { idx, (label, values) ->
-            val btn = makeConsoleButton(label, "#1E293B", "#38BDF8", "#F1F5F9", 9.5f).apply {
-                layoutParams = LinearLayout.LayoutParams(0, dp(32), 1f).apply {
-                    if (idx < presets10.size - 1) marginEnd = dp(5)
+            val btn = makeConsoleButton(label, "#1E293B", "#38BDF8", "#F1F5F9", 9f).apply {
+                layoutParams = LinearLayout.LayoutParams(0, dp(30), 1f).apply {
+                    if (idx < presets10.size - 1) marginEnd = dp(4)
                 }
                 setOnClickListener {
                     if (isToneLocked) {
-                        Toast.makeText(context, "Buka kunci (🔒 TERKUNCI) dulu untuk ganti preset", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Buka kunci dulu untuk ganti preset", Toast.LENGTH_SHORT).show()
                         return@setOnClickListener
                     }
                     val target = if (label == "CUSTOM") loadCustomPreset() else values
@@ -840,44 +917,310 @@ class MainActivity : AppCompatActivity() {
             }
             presetRow.addView(btn)
         }
-        eqCard.addView(presetRow)
+        panelTabEq.addView(presetRow)
+        dlmsMainCard.addView(panelTabEq)
 
-        // Baris Tombol Multi-Band Compressor: SUB-BASS BOOST & CLARITY
-        val mbcRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, 0, 0, dp(8))
+        // --- TAB 1: DYNAMIC 5-BAND COMPRESSOR ---
+        panelTabDyn = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
         }
-        btnSubBass = makeConsoleButton("🔊 SUB-BASS PUNCH", "#1E293B", "#F59E0B", "#FDE68A", 9.5f).apply {
-            layoutParams = LinearLayout.LayoutParams(0, dp(32), 1f).apply { marginEnd = dp(6) }
+
+        dynView = Dynamic5BandView(this, dynBandNames, dynThresholds, dynRatios, dynPostGains).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(76))
+        }
+        panelTabDyn.addView(dynView)
+
+        val dynBandBtnRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(5), 0, dp(6))
+        }
+        dynSelectBtns.clear()
+        for (i in 0..4) {
+            val b = makeConsoleButton(dynBandNames[i], "#1E293B", "#475569", "#CBD5E1", 9f).apply {
+                layoutParams = LinearLayout.LayoutParams(0, dp(28), 1f).apply {
+                    if (i < 4) marginEnd = dp(4)
+                }
+                setOnClickListener {
+                    selectedDynBand = i
+                    refreshDynamicTabUi()
+                }
+            }
+            dynSelectBtns.add(b)
+            dynBandBtnRow.addView(b)
+        }
+        panelTabDyn.addView(dynBandBtnRow)
+
+        val dynParamBox = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = makeRoundedBg("#0E131D", "#1E293B", dp(8).toFloat())
+            setPadding(dp(6), dp(6), dp(6), dp(6))
+        }
+
+        val colThresh = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        colThresh.addView(TextView(this).apply {
+            text = "THRESHOLD"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 8f)
+            setTextColor(Color.parseColor("#94A3B8"))
+            gravity = Gravity.CENTER
+        })
+        tvDynThresh = TextView(this).apply {
+            text = "-12.0 dB"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#F59E0B"))
+            gravity = Gravity.CENTER
+        }
+        val rowThBtns = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+        rowThBtns.addView(makeConsoleButton("-", "#1E293B", "#475569", "#FFFFFF", 11f).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(34), dp(24)).apply { marginEnd = dp(4) }
+            setOnClickListener {
+                dynThresholds[selectedDynBand] = (dynThresholds[selectedDynBand] - 2f).coerceIn(-30f, 0f)
+                applyMultiBandDynamics5(); refreshDynamicTabUi(); saveLastSessionState()
+            }
+        })
+        rowThBtns.addView(makeConsoleButton("+", "#1E293B", "#475569", "#FFFFFF", 11f).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(34), dp(24))
+            setOnClickListener {
+                dynThresholds[selectedDynBand] = (dynThresholds[selectedDynBand] + 2f).coerceIn(-30f, 0f)
+                applyMultiBandDynamics5(); refreshDynamicTabUi(); saveLastSessionState()
+            }
+        })
+        colThresh.addView(tvDynThresh)
+        colThresh.addView(rowThBtns)
+
+        val colRatio = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        colRatio.addView(TextView(this).apply {
+            text = "RATIO"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 8f)
+            setTextColor(Color.parseColor("#94A3B8"))
+            gravity = Gravity.CENTER
+        })
+        tvDynRatio = TextView(this).apply {
+            text = "2.5 : 1"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#22D3EE"))
+            gravity = Gravity.CENTER
+        }
+        val rowRaBtns = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+        rowRaBtns.addView(makeConsoleButton("-", "#1E293B", "#475569", "#FFFFFF", 11f).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(34), dp(24)).apply { marginEnd = dp(4) }
+            setOnClickListener {
+                dynRatios[selectedDynBand] = (dynRatios[selectedDynBand] - 0.5f).coerceIn(1.0f, 10.0f)
+                applyMultiBandDynamics5(); refreshDynamicTabUi(); saveLastSessionState()
+            }
+        })
+        rowRaBtns.addView(makeConsoleButton("+", "#1E293B", "#475569", "#FFFFFF", 11f).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(34), dp(24))
+            setOnClickListener {
+                dynRatios[selectedDynBand] = (dynRatios[selectedDynBand] + 0.5f).coerceIn(1.0f, 10.0f)
+                applyMultiBandDynamics5(); refreshDynamicTabUi(); saveLastSessionState()
+            }
+        })
+        colRatio.addView(tvDynRatio)
+        colRatio.addView(rowRaBtns)
+
+        val colGain = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        colGain.addView(TextView(this).apply {
+            text = "MAKE-UP GAIN"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 8f)
+            setTextColor(Color.parseColor("#94A3B8"))
+            gravity = Gravity.CENTER
+        })
+        tvDynGain = TextView(this).apply {
+            text = "+2.0 dB"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#34D399"))
+            gravity = Gravity.CENTER
+        }
+        val rowGaBtns = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+        rowGaBtns.addView(makeConsoleButton("-", "#1E293B", "#475569", "#FFFFFF", 11f).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(34), dp(24)).apply { marginEnd = dp(4) }
+            setOnClickListener {
+                dynPostGains[selectedDynBand] = (dynPostGains[selectedDynBand] - 1.0f).coerceIn(-6f, 10f)
+                applyMultiBandDynamics5(); refreshDynamicTabUi(); saveLastSessionState()
+            }
+        })
+        rowGaBtns.addView(makeConsoleButton("+", "#1E293B", "#475569", "#FFFFFF", 11f).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(34), dp(24))
+            setOnClickListener {
+                dynPostGains[selectedDynBand] = (dynPostGains[selectedDynBand] + 1.0f).coerceIn(-6f, 10f)
+                applyMultiBandDynamics5(); refreshDynamicTabUi(); saveLastSessionState()
+            }
+        })
+        colGain.addView(tvDynGain)
+        colGain.addView(rowGaBtns)
+
+        dynParamBox.addView(colThresh)
+        dynParamBox.addView(colRatio)
+        dynParamBox.addView(colGain)
+        panelTabDyn.addView(dynParamBox)
+
+        val mbcQuickRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(6), 0, 0)
+        }
+        btnSubBass = makeConsoleButton("🔊 SUB-BASS PUNCH", "#1E293B", "#F59E0B", "#FDE68A", 9f).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(30), 1f).apply { marginEnd = dp(5) }
             setOnClickListener {
                 isSubBassActive = !isSubBassActive
-                applyMultiBandDynamics()
-                updateMbcButtonsUi()
-                saveLastSessionState()
+                if (isSubBassActive) {
+                    dynThresholds[0] = -18f; dynRatios[0] = 4.0f; dynPostGains[0] = 5.0f
+                } else {
+                    dynThresholds[0] = -12f; dynRatios[0] = 2.5f; dynPostGains[0] = 2.0f
+                }
+                applyMultiBandDynamics5(); refreshDynamicTabUi(); updateMbcButtonsUi(); saveLastSessionState()
             }
         }
-        btnClarity = makeConsoleButton("✨ VOCAL CLARITY", "#1E293B", "#22D3EE", "#CFFAFE", 9.5f).apply {
-            layoutParams = LinearLayout.LayoutParams(0, dp(32), 1f)
+        btnClarity = makeConsoleButton("✨ VOCAL CLARITY", "#1E293B", "#22D3EE", "#CFFAFE", 9f).apply {
+            layoutParams = LinearLayout.LayoutParams(0, dp(30), 1f)
             setOnClickListener {
                 isClarityActive = !isClarityActive
-                applyMultiBandDynamics()
-                updateMbcButtonsUi()
-                saveLastSessionState()
+                if (isClarityActive) {
+                    dynPostGains[2] = -2.0f; dynPostGains[3] = 3.5f; dynPostGains[4] = 4.5f
+                } else {
+                    dynPostGains[2] = 0.0f; dynPostGains[3] = 1.5f; dynPostGains[4] = 2.5f
+                }
+                applyMultiBandDynamics5(); refreshDynamicTabUi(); updateMbcButtonsUi(); saveLastSessionState()
             }
         }
-        mbcRow.addView(btnSubBass)
-        mbcRow.addView(btnClarity)
-        eqCard.addView(mbcRow)
+        mbcQuickRow.addView(btnSubBass)
+        mbcQuickRow.addView(btnClarity)
+        panelTabDyn.addView(mbcQuickRow)
+        dlmsMainCard.addView(panelTabDyn)
 
-        // 3 Rotary Knobs
-        val toneContainer = LinearLayout(this).apply {
+        // --- TAB 2: CROSSOVER & LIMITER ---
+        panelTabXover = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = makeRoundedBg("#181F2F", "#1E293B", dp(10).toFloat())
-            setPadding(dp(8), dp(6), dp(8), dp(6))
+            visibility = View.GONE
+            setPadding(dp(4), dp(4), dp(4), dp(4))
         }
+
+        val hpfHeader = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        hpfHeader.addView(TextView(this).apply {
+            text = "HIGH-PASS FILTER (POTONG SUB BERLEBIH)"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#38BDF8"))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        tvHpfVal = TextView(this).apply {
+            text = "${hpfCutoffHz.toInt()} Hz"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
+            typeface = Typeface.MONOSPACE
+            setTextColor(Color.WHITE)
+        }
+        hpfHeader.addView(tvHpfVal)
+        panelTabXover.addView(hpfHeader)
+
+        panelTabXover.addView(SeekBar(this).apply {
+            max = 130
+            progress = (hpfCutoffHz - 20f).toInt().coerceIn(0, 130)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
+                    hpfCutoffHz = 20f + p
+                    tvHpfVal.text = "${hpfCutoffHz.toInt()} Hz"
+                    applyAllBands10()
+                }
+                override fun onStartTrackingTouch(sb: SeekBar?) {}
+                override fun onStopTrackingTouch(sb: SeekBar?) { saveLastSessionState() }
+            })
+        })
+
+        val lpfHeader = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(8), 0, 0)
+        }
+        lpfHeader.addView(TextView(this).apply {
+            text = "LOW-PASS FILTER (REDAM DESIS TINGGI)"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#F59E0B"))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        tvLpfVal = TextView(this).apply {
+            text = "${lpfCutoffHz.toInt()} Hz"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
+            typeface = Typeface.MONOSPACE
+            setTextColor(Color.WHITE)
+        }
+        lpfHeader.addView(tvLpfVal)
+        panelTabXover.addView(lpfHeader)
+
+        panelTabXover.addView(SeekBar(this).apply {
+            max = 140
+            progress = ((lpfCutoffHz - 6000f) / 100f).toInt().coerceIn(0, 140)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
+                    lpfCutoffHz = 6000f + p * 100f
+                    tvLpfVal.text = "${lpfCutoffHz.toInt()} Hz"
+                    applyAllBands10()
+                }
+                override fun onStartTrackingTouch(sb: SeekBar?) {}
+                override fun onStopTrackingTouch(sb: SeekBar?) { saveLastSessionState() }
+            })
+        })
+
+        val limHeader = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(8), 0, 0)
+        }
+        limHeader.addView(TextView(this).apply {
+            text = "ANTI-CLIP OUTPUT LIMITER THRESHOLD"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#34D399"))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        tvLimVal = TextView(this).apply {
+            text = "${String.format("%.1f", limiterThreshDb)} dB"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
+            typeface = Typeface.MONOSPACE
+            setTextColor(Color.WHITE)
+        }
+        limHeader.addView(tvLimVal)
+        panelTabXover.addView(limHeader)
+
+        panelTabXover.addView(SeekBar(this).apply {
+            max = 120
+            progress = ((limiterThreshDb + 12f) * 10f).toInt().coerceIn(0, 120)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
+                    limiterThreshDb = -12f + (p / 10f)
+                    tvLimVal.text = "${String.format("%.1f", limiterThreshDb)} dB"
+                    applyOutputLimiterSettings()
+                }
+                override fun onStartTrackingTouch(sb: SeekBar?) {}
+                override fun onStopTrackingTouch(sb: SeekBar?) { saveLastSessionState() }
+            })
+        })
+        dlmsMainCard.addView(panelTabXover)
+
+        // --- TAB 3: TONE KNOBS & HALL REVERB ---
+        panelTabFx = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+
         val knobsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
+            background = makeRoundedBg("#141B29", "#1E293B", dp(8).toFloat())
+            setPadding(dp(6), dp(6), dp(6), dp(6))
         }
         knobBass = RotaryKnobView(this, "MASTER BASS", -12f, 12f, toneBass, "dB", "#F59E0B") { value ->
             toneBass = value; applyAllBands10(); saveLastSessionState()
@@ -888,41 +1231,61 @@ class MainActivity : AppCompatActivity() {
         knobTreble = RotaryKnobView(this, "MASTER TREBLE", -12f, 12f, toneTreble, "dB", "#38BDF8") { value ->
             toneTreble = value; applyAllBands10(); saveLastSessionState()
         }
-        val knobLayout = LinearLayout.LayoutParams(0, dp(90), 1f)
+        val knobLayout = LinearLayout.LayoutParams(0, dp(92), 1f)
         knobsRow.addView(knobBass, knobLayout)
         knobsRow.addView(knobMid, knobLayout)
         knobsRow.addView(knobTreble, knobLayout)
-        toneContainer.addView(knobsRow)
+        panelTabFx.addView(knobsRow)
 
-        eqCard.addView(toneContainer)
-        root.addView(eqCard)
-        root.addView(spacer(dp(8)))
+        btnReverbToggle = makeConsoleButton("🏛 EFEK RUANG (HALL AMBIENCE): OFF", "#1E293B", "#A855F7", "#E9D5FF", 9.5f).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(34)).apply {
+                topMargin = dp(8)
+            }
+            setOnClickListener {
+                isReverbActive = !isReverbActive
+                applyHallReverb(isReverbActive)
+                if (isReverbActive) {
+                    text = "🏛 EFEK RUANG (HALL AMBIENCE): ON"
+                    background = makeRoundedBg("#581C87", "#C084FC", dp(8).toFloat())
+                    setTextColor(Color.WHITE)
+                } else {
+                    text = "🏛 EFEK RUANG (HALL AMBIENCE): OFF"
+                    background = makeRoundedBg("#1E293B", "#A855F7", dp(8).toFloat())
+                    setTextColor(Color.parseColor("#E9D5FF"))
+                }
+            }
+        }
+        panelTabFx.addView(btnReverbToggle)
+        dlmsMainCard.addView(panelTabFx)
 
-        // === 5. SOUNDBOARD BANK A / BANK B (16 SLOT + UBAH NAMA & GANTI MP3) ===
-        val sbdCard = createCardPanel().apply { setPadding(dp(8), dp(8), dp(8), dp(8)) }
+        root.addView(dlmsMainCard)
+        root.addView(spacer(dp(6)))
+
+        // === 6. SOUNDBOARD BANK A / BANK B (16 SLOT + EDIT NAMA & MP3) ===
+        val sbdCard = createCardPanel().apply { setPadding(dp(7), dp(7), dp(7), dp(7)) }
         val sbdHeader = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(2), 0, dp(2), dp(6))
+            setPadding(dp(2), 0, dp(2), dp(5))
         }
         sbdHeader.addView(TextView(this).apply {
-            text = "SOUNDBOARD (TAHAN PAD = EDIT)"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
+            text = "SOUNDBOARD (TAHAN = EDIT)"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 8.5f)
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#E2E8F0"))
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         })
 
-        btnBankA = makeConsoleButton("BANK A", "#2563EB", "#60A5FA", "#FFFFFF", 9f).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(54), dp(26)).apply { marginEnd = dp(4) }
+        btnBankA = makeConsoleButton("BANK A", "#2563EB", "#60A5FA", "#FFFFFF", 8.5f).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(50), dp(24)).apply { marginEnd = dp(4) }
             setOnClickListener { switchSoundboardBank(0) }
         }
-        btnBankB = makeConsoleButton("BANK B", "#1E293B", "#475569", "#94A3B8", 9f).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(54), dp(26)).apply { marginEnd = dp(6) }
+        btnBankB = makeConsoleButton("BANK B", "#1E293B", "#475569", "#94A3B8", 8.5f).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(50), dp(24)).apply { marginEnd = dp(5) }
             setOnClickListener { switchSoundboardBank(1) }
         }
-        val btnStopAllSfx = makeConsoleButton("⏹ STOP ALL", "#7F1D1D", "#EF4444", "#FCA5A5", 9f).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(72), dp(26))
+        val btnStopAllSfx = makeConsoleButton("⏹ STOP ALL", "#7F1D1D", "#EF4444", "#FCA5A5", 8.5f).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(68), dp(24))
             setOnClickListener { stopAllSounds() }
         }
         sbdHeader.addView(btnBankA)
@@ -937,11 +1300,8 @@ class MainActivity : AppCompatActivity() {
         val neonColors = arrayOf("#A855F7", "#10B981", "#F59E0B", "#38BDF8", "#06B6D4", "#EF4444", "#EC4899", "#8B5CF6")
         padButtons.clear()
         for (i in 0..7) {
-            val btn = makeConsoleButton("", "#161E2E", neonColors[i], "#FFFFFF", 10f).apply {
-                setOnClickListener {
-                    val slotKey = getSlotKey(currentBank, i)
-                    playSoundPad(slotKey)
-                }
+            val btn = makeConsoleButton("", "#161E2E", neonColors[i], "#FFFFFF", 9.5f).apply {
+                setOnClickListener { playSoundPad(getSlotKey(currentBank, i)) }
                 setOnLongClickListener {
                     val slotKey = getSlotKey(currentBank, i)
                     showEditPadDialog(currentBank, i, slotKey)
@@ -950,41 +1310,41 @@ class MainActivity : AppCompatActivity() {
             }
             val gp = GridLayout.LayoutParams().apply {
                 width = 0
-                height = dp(44)
+                height = dp(40)
                 columnSpec = GridLayout.spec(i % 4, 1f)
                 rowSpec = GridLayout.spec(i / 4, 1f)
-                setMargins(dp(3), dp(3), dp(3), dp(3))
+                setMargins(dp(2.5f.toInt()), dp(2.5f.toInt()), dp(2.5f.toInt()), dp(2.5f.toInt()))
             }
             padButtons.add(btn)
             sbdGrid.addView(btn, gp)
         }
         sbdCard.addView(sbdGrid)
         root.addView(sbdCard)
-        root.addView(spacer(dp(8)))
+        root.addView(spacer(dp(6)))
 
-        // === 6. PEMUTAR KHUSUS BGM NGOBROL (AUTO-LOOP MP3) ===
-        val bgmCard = createCardPanel().apply { setPadding(dp(10), dp(8), dp(10), dp(8)) }
+        // === 7. BGM NGOBROL AUTO-LOOP PLAYER ===
+        val bgmCard = createCardPanel().apply { setPadding(dp(8), dp(6), dp(8), dp(6)) }
         val bgmTopRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, dp(4))
+            setPadding(0, 0, 0, dp(3))
         }
         tvBgmTitle = TextView(this).apply {
             text = "🎵 BGM NGOBROL: (Belum dipilih)"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#CBD5E1"))
             maxLines = 1
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
-        val btnPickBgm = makeConsoleButton("📂 PILIH MP3", "#1E293B", "#475569", "#E2E8F0", 9f).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(28)).apply {
+        val btnPickBgm = makeConsoleButton("📂 PILIH MP3", "#1E293B", "#475569", "#E2E8F0", 8.5f).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(26)).apply {
                 marginEnd = dp(4)
             }
             setOnClickListener { pickBgmLauncher.launch("audio/*") }
         }
-        btnBgmPlayStop = makeConsoleButton("▶ LOOP BGM", "#065F46", "#10B981", "#FFFFFF", 9f).apply {
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(28))
+        btnBgmPlayStop = makeConsoleButton("▶ LOOP BGM", "#065F46", "#10B981", "#FFFFFF", 8.5f).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(26))
             setOnClickListener { toggleBgmPlayback() }
         }
         bgmTopRow.addView(tvBgmTitle)
@@ -998,10 +1358,10 @@ class MainActivity : AppCompatActivity() {
         }
         bgmVolRow.addView(TextView(this).apply {
             text = "BGM VOL"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 8.5f)
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#94A3B8"))
-            layoutParams = LinearLayout.LayoutParams(dp(58), LinearLayout.LayoutParams.WRAP_CONTENT)
+            layoutParams = LinearLayout.LayoutParams(dp(54), LinearLayout.LayoutParams.WRAP_CONTENT)
         })
         seekBgmVol = SeekBar(this).apply {
             max = 100
@@ -1022,11 +1382,11 @@ class MainActivity : AppCompatActivity() {
         }
         tvBgmVolPct = TextView(this).apply {
             text = "$bgmVolume%"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#E2E8F0"))
             gravity = Gravity.END
-            layoutParams = LinearLayout.LayoutParams(dp(34), LinearLayout.LayoutParams.WRAP_CONTENT)
+            layoutParams = LinearLayout.LayoutParams(dp(32), LinearLayout.LayoutParams.WRAP_CONTENT)
         }
         bgmVolRow.addView(seekBgmVol)
         bgmVolRow.addView(tvBgmVolPct)
@@ -1036,16 +1396,133 @@ class MainActivity : AppCompatActivity() {
         rootScroll.addView(root)
         setContentView(rootScroll)
 
-        // Inisialisasi Audio, DSP & Tampilan Awal
+        // Inisialisasi Semua Mesin DSP & Tampilan
         lockHardwareMediaVolumeMax()
-        applyMasterBoostGain(masterBoostDb.toFloat())
+        setDisplayDeckMode(0)
+        applyChannelBoostAndRouting()
         applyAllBands10()
-        applyMultiBandDynamics()
+        applyMultiBandDynamics5()
+        applyOutputLimiterSettings()
+        refreshDynamicTabUi()
         updateMbcButtonsUi()
         applyLockUiState()
         switchSoundboardBank(0)
         restoreSavedBgmInfo()
         ensureVisualizerPermissionAndStart()
+    }
+
+    // === PENGATUR MODE LAYAR YOUTUBE & RTA 24-BAND ===
+    private fun setDisplayDeckMode(mode: Int) {
+        displayDeckMode = mode
+        val btns = arrayOf(btnModeSplit, btnModeYtFull, btnModeRtaFull, btnModeFold)
+        for (i in 0..3) {
+            if (i == mode) {
+                btns[i].background = makeRoundedBg("#0284C7", "#38BDF8", dp(7).toFloat())
+                btns[i].setTextColor(Color.WHITE)
+            } else {
+                btns[i].background = makeRoundedBg("#1E293B", "#475569", dp(7).toFloat())
+                btns[i].setTextColor(Color.parseColor("#CBD5E1"))
+            }
+        }
+
+        val ytLp = ytWebView.layoutParams
+        val rtaLp = rtaView.layoutParams
+
+        when (mode) {
+            0 -> { // YT + RTA (Keduanya tampil bersamaan dalam satu layar)
+                ytWebView.visibility = View.VISIBLE
+                ytLp.height = dp(175)
+                rtaView.visibility = View.VISIBLE
+                rtaLp.height = dp(64)
+            }
+            1 -> { // YT FULL (Fokus lirik karaoke besar)
+                ytWebView.visibility = View.VISIBLE
+                ytLp.height = dp(310)
+                rtaView.visibility = View.GONE
+            }
+            2 -> { // RTA DSP FULL (Fokus Grafik RTA 24-Band besar, audio YT tetap jalan)
+                ytWebView.visibility = View.INVISIBLE
+                ytLp.height = dp(1)
+                rtaView.visibility = View.VISIBLE
+                rtaLp.height = dp(215)
+            }
+            3 -> { // LIPAT (Hemat ruang, audio YT tetap jalan)
+                ytWebView.visibility = View.INVISIBLE
+                ytLp.height = dp(1)
+                rtaView.visibility = View.GONE
+            }
+        }
+        ytWebView.layoutParams = ytLp
+        rtaView.layoutParams = rtaLp
+    }
+
+    // === NAVIGASI 4 TAB DLMS ===
+    private fun switchDlmsTab(tabIndex: Int) {
+        activeDlmsTab = tabIndex
+        val tabs = arrayOf(tabBtnEq, tabBtnDyn, tabBtnXover, tabBtnFx)
+        val panels = arrayOf(panelTabEq, panelTabDyn, panelTabXover, panelTabFx)
+
+        for (i in 0..3) {
+            if (i == tabIndex) {
+                tabs[i].background = makeRoundedBg("#0284C7", "#38BDF8", dp(7).toFloat())
+                tabs[i].setTextColor(Color.WHITE)
+                panels[i].visibility = View.VISIBLE
+            } else {
+                tabs[i].background = makeRoundedBg("#1E293B", "#475569", dp(7).toFloat())
+                tabs[i].setTextColor(Color.parseColor("#94A3B8"))
+                panels[i].visibility = View.GONE
+            }
+        }
+    }
+
+    private fun refreshDynamicTabUi() {
+        for (i in 0..4) {
+            if (i == selectedDynBand) {
+                dynSelectBtns[i].background = makeRoundedBg("#0284C7", "#38BDF8", dp(6).toFloat())
+                dynSelectBtns[i].setTextColor(Color.WHITE)
+            } else {
+                dynSelectBtns[i].background = makeRoundedBg("#1E293B", "#475569", dp(6).toFloat())
+                dynSelectBtns[i].setTextColor(Color.parseColor("#CBD5E1"))
+            }
+        }
+        tvDynThresh.text = "${String.format("%.1f", dynThresholds[selectedDynBand])} dB"
+        tvDynRatio.text = "${String.format("%.1f", dynRatios[selectedDynBand])} : 1"
+        val g = dynPostGains[selectedDynBand]
+        tvDynGain.text = if (g > 0f) "+${String.format("%.1f", g)} dB" else "${String.format("%.1f", g)} dB"
+        dynView.selectedBand = selectedDynBand
+        dynView.invalidate()
+    }
+
+    private fun updateChannelRouteUiAndApply() {
+        when (channelRouteMode) {
+            0 -> {
+                btnRouteMode.text = "STEREO\nL + R"
+                btnRouteMode.background = makeRoundedBg("#0F172A", "#22D3EE", dp(7).toFloat())
+                btnRouteMode.setTextColor(Color.parseColor("#22D3EE"))
+            }
+            1 -> {
+                btnRouteMode.text = "KIRI\nL ONLY"
+                btnRouteMode.background = makeRoundedBg("#1E3A8A", "#60A5FA", dp(7).toFloat())
+                btnRouteMode.setTextColor(Color.WHITE)
+            }
+            2 -> {
+                btnRouteMode.text = "KANAN\nR ONLY"
+                btnRouteMode.background = makeRoundedBg("#9A3412", "#FB923C", dp(7).toFloat())
+                btnRouteMode.setTextColor(Color.WHITE)
+            }
+        }
+        applyChannelBoostAndRouting()
+    }
+
+    private fun applyChannelBoostAndRouting() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && dynamicsProcessing != null) {
+                val gainL = if (channelRouteMode == 2) -90f else boostLeftDb.toFloat()
+                val gainR = if (channelRouteMode == 1) -90f else boostRightDb.toFloat()
+                dynamicsProcessing!!.setInputGainbyChannel(0, gainL)
+                dynamicsProcessing!!.setInputGainbyChannel(1, gainR)
+            }
+        } catch (_: Exception) {}
     }
 
     private fun updateTimerDisplay(totalMs: Long) {
@@ -1092,8 +1569,8 @@ class MainActivity : AppCompatActivity() {
             else -> "NADA: 0"
         }
         btnKeyDisplay.text = label
-        btnKeyDisplay.background = if (pitchSteps != 0) makeRoundedBg("#4C1D95", "#C084FC", dp(8).toFloat())
-        else makeRoundedBg("#161E2E", "#64748B", dp(8).toFloat())
+        btnKeyDisplay.background = if (pitchSteps != 0) makeRoundedBg("#4C1D95", "#C084FC", dp(7).toFloat())
+        else makeRoundedBg("#161E2E", "#64748B", dp(7).toFloat())
         applyYoutubePitchSteps(pitchSteps)
     }
 
@@ -1134,12 +1611,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateMbcButtonsUi() {
-        btnSubBass.background = if (isSubBassActive) makeRoundedBg("#B45309", "#FBBF24", dp(8).toFloat())
-        else makeRoundedBg("#1E293B", "#F59E0B", dp(8).toFloat())
+        btnSubBass.background = if (isSubBassActive) makeRoundedBg("#B45309", "#FBBF24", dp(7).toFloat())
+        else makeRoundedBg("#1E293B", "#F59E0B", dp(7).toFloat())
         btnSubBass.setTextColor(if (isSubBassActive) Color.WHITE else Color.parseColor("#FDE68A"))
 
-        btnClarity.background = if (isClarityActive) makeRoundedBg("#0E7490", "#22D3EE", dp(8).toFloat())
-        else makeRoundedBg("#1E293B", "#22D3EE", dp(8).toFloat())
+        btnClarity.background = if (isClarityActive) makeRoundedBg("#0E7490", "#22D3EE", dp(7).toFloat())
+        else makeRoundedBg("#1E293B", "#22D3EE", dp(7).toFloat())
         btnClarity.setTextColor(if (isClarityActive) Color.WHITE else Color.parseColor("#CFFAFE"))
     }
 
@@ -1151,10 +1628,10 @@ class MainActivity : AppCompatActivity() {
 
         if (isToneLocked) {
             btnLockTone.text = "🔒 TERKUNCI"
-            btnLockTone.background = makeRoundedBg("#B91C1C", "#F87171", dp(8).toFloat())
+            btnLockTone.background = makeRoundedBg("#B91C1C", "#F87171", dp(7).toFloat())
         } else {
-            btnLockTone.text = "🔓 UNLOCKED"
-            btnLockTone.background = makeRoundedBg("#1E293B", "#38BDF8", dp(8).toFloat())
+            btnLockTone.text = "🔓 UNLOCK"
+            btnLockTone.background = makeRoundedBg("#1E293B", "#38BDF8", dp(7).toFloat())
         }
         eqView.invalidate()
         knobBass.invalidate()
@@ -1162,21 +1639,20 @@ class MainActivity : AppCompatActivity() {
         knobTreble.invalidate()
     }
 
-    // === DSP ENGINE: 10-BAND PRE-EQ + 3-BAND MBC (SUB-BASS/CLARITY) + INPUT GAIN + LIMITER ===
-    private fun setupAudioDspPro() {
+    // === MESIN DSP DLMS ===
+    private fun setupAudioDspDlms() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 val cfg = DynamicsProcessing.Config.Builder(
                     DynamicsProcessing.VARIANT_FAVOR_FREQUENCY_RESOLUTION,
                     2,
-                    true, 10, // 10-Band Pre-EQ
-                    true, 3,  // 3-Band Multi-Band Compressor (Sub-Bass, Mid, Clarity)
+                    true, 10,
+                    true, 5,
                     false, 0,
-                    true      // Output Limiter
+                    true
                 ).build()
                 dynamicsProcessing = DynamicsProcessing(0, 0, cfg).apply {
                     enabled = true
-                    setInputGainAllChannelsTo(masterBoostDb.toFloat())
                     for (ch in 0..1) {
                         val preEq = getPreEqByChannelIndex(ch)
                         preEq.isEnabled = true
@@ -1189,68 +1665,58 @@ class MainActivity : AppCompatActivity() {
                         }
                         val mbc = getMbcByChannelIndex(ch)
                         mbc.isEnabled = true
-
-                        val limiter = getLimiterByChannelIndex(ch)
-                        limiter.isEnabled = true
-                        limiter.threshold = -1.0f
-                        limiter.ratio = 12f
-                        limiter.attackTime = 1.5f
-                        limiter.releaseTime = 50f
-                        setLimiterByChannelIndex(ch, limiter)
                     }
                 }
             } else {
                 fallbackEqualizer = Equalizer(0, 0).apply { enabled = true }
+            }
+
+            presetReverb = PresetReverb(0, 0).apply {
+                preset = PresetReverb.PRESET_LARGEHALL
+                enabled = false
             }
         } catch (e: Exception) {
             e.printStackTrace()
         }
     }
 
-    private fun applyMasterBoostGain(gainDb: Float) {
+    private fun applyHallReverb(enable: Boolean) {
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                dynamicsProcessing?.setInputGainAllChannelsTo(gainDb)
+            presetReverb?.enabled = enable
+        } catch (_: Exception) {}
+    }
+
+    private fun applyOutputLimiterSettings() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && dynamicsProcessing != null) {
+                for (ch in 0..1) {
+                    val limiter = dynamicsProcessing!!.getLimiterByChannelIndex(ch)
+                    limiter.isEnabled = true
+                    limiter.threshold = limiterThreshDb
+                    limiter.ratio = 12f
+                    limiter.attackTime = 1.5f
+                    limiter.releaseTime = 50f
+                    dynamicsProcessing!!.setLimiterByChannelIndex(ch, limiter)
+                }
             }
         } catch (_: Exception) {}
     }
 
-    private fun applyMultiBandDynamics() {
+    private fun applyMultiBandDynamics5() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && dynamicsProcessing != null) {
                 for (ch in 0..1) {
-                    // Band 0: Sub-Bass (<= 140 Hz)
-                    val bSub = dynamicsProcessing!!.getMbcBandByChannelIndex(ch, 0)
-                    bSub.isEnabled = true
-                    bSub.cutoffFrequency = 140f
-                    bSub.attackTime = 15f
-                    bSub.releaseTime = 120f
-                    bSub.threshold = if (isSubBassActive) -18f else -6f
-                    bSub.ratio = if (isSubBassActive) 3.5f else 1.2f
-                    bSub.postGain = if (isSubBassActive) 4.5f else 0f
-                    dynamicsProcessing!!.setMbcBandByChannelIndex(ch, 0, bSub)
-
-                    // Band 1: Midrange (140 Hz - 3500 Hz)
-                    val bMid = dynamicsProcessing!!.getMbcBandByChannelIndex(ch, 1)
-                    bMid.isEnabled = true
-                    bMid.cutoffFrequency = 3500f
-                    bMid.attackTime = 10f
-                    bMid.releaseTime = 100f
-                    bMid.threshold = if (isClarityActive) -16f else -6f
-                    bMid.ratio = if (isClarityActive) 2.5f else 1.1f
-                    bMid.postGain = if (isClarityActive) -1.5f else 0f
-                    dynamicsProcessing!!.setMbcBandByChannelIndex(ch, 1, bMid)
-
-                    // Band 2: High Clarity (>= 3500 Hz)
-                    val bHigh = dynamicsProcessing!!.getMbcBandByChannelIndex(ch, 2)
-                    bHigh.isEnabled = true
-                    bHigh.cutoffFrequency = 20000f
-                    bHigh.attackTime = 8f
-                    bHigh.releaseTime = 80f
-                    bHigh.threshold = if (isClarityActive) -18f else -6f
-                    bHigh.ratio = if (isClarityActive) 2.8f else 1.1f
-                    bHigh.postGain = if (isClarityActive) 4.0f else 0f
-                    dynamicsProcessing!!.setMbcBandByChannelIndex(ch, 2, bHigh)
+                    for (b in 0..4) {
+                        val mbcBand = dynamicsProcessing!!.getMbcBandByChannelIndex(ch, b)
+                        mbcBand.isEnabled = true
+                        mbcBand.cutoffFrequency = dynCutoffs[b]
+                        mbcBand.attackTime = if (b == 0) 15f else 10f
+                        mbcBand.releaseTime = if (b == 0) 120f else 85f
+                        mbcBand.threshold = dynThresholds[b]
+                        mbcBand.ratio = dynRatios[b]
+                        mbcBand.postGain = dynPostGains[b]
+                        dynamicsProcessing!!.setMbcBandByChannelIndex(ch, b, mbcBand)
+                    }
                 }
             }
         } catch (_: Exception) {}
@@ -1269,13 +1735,22 @@ class MainActivity : AppCompatActivity() {
             3, 4, 5, 6 -> toneMid
             else -> toneTreble
         }
-        val calculatedGain = (currentGains10[bandIdx] + toneOffset).coerceIn(-15f, 15f)
+        val freq = defaultFreqs10[bandIdx]
+        var xoverCut = 0f
+        if (freq < hpfCutoffHz) {
+            xoverCut -= ((hpfCutoffHz - freq) / hpfCutoffHz) * 18f
+        }
+        if (freq > lpfCutoffHz) {
+            xoverCut -= ((freq - lpfCutoffHz) / freq) * 18f
+        }
+
+        val calculatedGain = (currentGains10[bandIdx] + toneOffset + xoverCut).coerceIn(-15f, 15f)
 
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && dynamicsProcessing != null) {
                 for (ch in 0..1) {
                     val band = dynamicsProcessing!!.getPreEqBandByChannelIndex(ch, bandIdx)
-                    band.cutoffFrequency = defaultFreqs10[bandIdx]
+                    band.cutoffFrequency = freq
                     band.gain = calculatedGain
                     dynamicsProcessing!!.setPreEqBandByChannelIndex(ch, bandIdx, band)
                 }
@@ -1293,7 +1768,7 @@ class MainActivity : AppCompatActivity() {
         for (i in 0..9) applySingleBandCalculated10(i)
     }
 
-    // === SOUNDBOARD 16 SLOT (BANK A & BANK B) ===
+    // === SOUNDBOARD 16 SLOT ===
     private fun getSlotKey(bank: Int, idx: Int): String = if (bank == 0) "bankA_$idx" else "bankB_$idx"
 
     private fun getPadLabel(bank: Int, idx: Int): String {
@@ -1322,9 +1797,7 @@ class MainActivity : AppCompatActivity() {
             btnBankA.setTextColor(Color.parseColor("#94A3B8"))
         }
         for (i in 0..7) {
-            if (i < padButtons.size) {
-                padButtons[i].text = getPadLabel(bank, i)
-            }
+            if (i < padButtons.size) padButtons[i].text = getPadLabel(bank, i)
         }
     }
 
@@ -1412,7 +1885,7 @@ class MainActivity : AppCompatActivity() {
         activeStreams.clear()
     }
 
-    // === PEMUTAR KHUSUS BGM NGOBROL (AUTO-LOOP) ===
+    // === BGM NGOBROL AUTO-LOOP ===
     private fun importCustomBgmFile(uri: Uri) {
         try {
             val destFile = File(filesDir, "custom_bgm_loop.audio")
@@ -1464,7 +1937,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 isBgmPlaying = true
                 btnBgmPlayStop.text = "⏹ STOP BGM"
-                btnBgmPlayStop.background = makeRoundedBg("#B91C1C", "#F87171", dp(8).toFloat())
+                btnBgmPlayStop.background = makeRoundedBg("#B91C1C", "#F87171", dp(7).toFloat())
             } catch (_: Exception) {
                 Toast.makeText(this, "Gagal memutar BGM", Toast.LENGTH_SHORT).show()
             }
@@ -1480,11 +1953,11 @@ class MainActivity : AppCompatActivity() {
         isBgmPlaying = false
         if (this::btnBgmPlayStop.isInitialized) {
             btnBgmPlayStop.text = "▶ LOOP BGM"
-            btnBgmPlayStop.background = makeRoundedBg("#065F46", "#10B981", dp(8).toFloat())
+            btnBgmPlayStop.background = makeRoundedBg("#065F46", "#10B981", dp(7).toFloat())
         }
     }
 
-    // === PENYIMPANAN SESI & PRESET ===
+    // === SIMPAN & PULIHKAN SETELAN ===
     private fun saveCustomPreset() {
         val prefs = getSharedPreferences("OhoMixerPrefs", Context.MODE_PRIVATE).edit()
         for (i in 0..9) prefs.putFloat("band10_$i", currentGains10[i])
@@ -1499,13 +1972,22 @@ class MainActivity : AppCompatActivity() {
     private fun saveLastSessionState() {
         val prefs = getSharedPreferences("OhoMixerPrefs", Context.MODE_PRIVATE).edit()
         for (i in 0..9) prefs.putFloat("last10_band_$i", currentGains10[i])
+        for (i in 0..4) {
+            prefs.putFloat("dyn_th_$i", dynThresholds[i])
+            prefs.putFloat("dyn_ra_$i", dynRatios[i])
+            prefs.putFloat("dyn_ga_$i", dynPostGains[i])
+        }
+        prefs.putFloat("last_hpf", hpfCutoffHz)
+        prefs.putFloat("last_lpf", lpfCutoffHz)
+        prefs.putFloat("last_lim", limiterThreshDb)
         prefs.putFloat("last_tone_bass", toneBass)
         prefs.putFloat("last_tone_mid", toneMid)
         prefs.putFloat("last_tone_treble", toneTreble)
         prefs.putBoolean("last_tone_locked", isToneLocked)
         prefs.putBoolean("last_sub_bass", isSubBassActive)
         prefs.putBoolean("last_clarity", isClarityActive)
-        prefs.putInt("last_master_boost", masterBoostDb)
+        prefs.putInt("last_boost_l", boostLeftDb)
+        prefs.putInt("last_boost_r", boostRightDb)
         prefs.putInt("last_music_vol", normalMusicVolume)
         prefs.putInt("last_sfx_vol", sfxVolume)
         prefs.putInt("last_bgm_vol", bgmVolume)
@@ -1515,16 +1997,23 @@ class MainActivity : AppCompatActivity() {
     private fun restoreLastSessionState() {
         val prefs = getSharedPreferences("OhoMixerPrefs", Context.MODE_PRIVATE)
         val defaultDangdut10 = floatArrayOf(6.0f, 5.5f, 3.5f, -1.0f, -2.5f, -2.0f, 1.5f, 3.5f, 4.5f, 5.0f)
-        for (i in 0..9) {
-            currentGains10[i] = prefs.getFloat("last10_band_$i", defaultDangdut10[i])
+        for (i in 0..9) currentGains10[i] = prefs.getFloat("last10_band_$i", defaultDangdut10[i])
+        for (i in 0..4) {
+            dynThresholds[i] = prefs.getFloat("dyn_th_$i", dynThresholds[i])
+            dynRatios[i] = prefs.getFloat("dyn_ra_$i", dynRatios[i])
+            dynPostGains[i] = prefs.getFloat("dyn_ga_$i", dynPostGains[i])
         }
+        hpfCutoffHz = prefs.getFloat("last_hpf", 30f)
+        lpfCutoffHz = prefs.getFloat("last_lpf", 18000f)
+        limiterThreshDb = prefs.getFloat("last_lim", -1.0f)
         toneBass = prefs.getFloat("last_tone_bass", 0f)
         toneMid = prefs.getFloat("last_tone_mid", 0f)
         toneTreble = prefs.getFloat("last_tone_treble", 0f)
         isToneLocked = prefs.getBoolean("last_tone_locked", false)
         isSubBassActive = prefs.getBoolean("last_sub_bass", false)
         isClarityActive = prefs.getBoolean("last_clarity", false)
-        masterBoostDb = prefs.getInt("last_master_boost", 6)
+        boostLeftDb = prefs.getInt("last_boost_l", 6)
+        boostRightDb = prefs.getInt("last_boost_r", 6)
         normalMusicVolume = prefs.getInt("last_music_vol", 85)
         currentMusicVolume = normalMusicVolume
         sfxVolume = prefs.getInt("last_sfx_vol", 100)
@@ -1554,28 +2043,16 @@ class MainActivity : AppCompatActivity() {
     private fun setupVisualizer() {
         try {
             visualizer?.release()
+            val maxCap = Visualizer.getCaptureSizeRange()[1]
             visualizer = Visualizer(0).apply {
-                captureSize = Visualizer.getCaptureSizeRange()[0]
+                captureSize = min(512, maxCap)
                 setDataCaptureListener(object : Visualizer.OnDataCaptureListener {
-                    override fun onWaveFormDataCapture(v: Visualizer?, waveform: ByteArray?, rate: Int) {
-                        if (waveform == null || waveform.isEmpty()) return
-                        var sumSqL = 0.0
-                        var sumSqR = 0.0
-                        val half = waveform.size / 2
-                        for (i in 0 until half) {
-                            val sampleL = ((waveform[i].toInt() and 0xFF) - 128) / 128.0
-                            sumSqL += sampleL * sampleL
-                        }
-                        for (i in half until waveform.size) {
-                            val sampleR = ((waveform[i].toInt() and 0xFF) - 128) / 128.0
-                            sumSqR += sampleR * sampleR
-                        }
-                        val rmsL = sqrt(sumSqL / max(1, half)).toFloat()
-                        val rmsR = sqrt(sumSqR / max(1, waveform.size - half)).toFloat()
-                        vuMeter.setStereoLevels(rmsL * 3.2f, rmsR * 3.2f)
+                    override fun onWaveFormDataCapture(v: Visualizer?, waveform: ByteArray?, rate: Int) {}
+                    override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, rate: Int) {
+                        if (fft == null || fft.size < 4) return
+                        rtaView.updateFftData(fft)
                     }
-                    override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, rate: Int) {}
-                }, Visualizer.getMaxCaptureRate(), true, false)
+                }, Visualizer.getMaxCaptureRate(), false, true)
                 enabled = true
             }
         } catch (e: Exception) {
@@ -1585,7 +2062,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun createCardPanel(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
-        background = makeRoundedBg("#121722", "#263248", dp(10).toFloat())
+        background = makeRoundedBg("#121722", "#263248", dp(9).toFloat())
     }
 
     private fun makeRoundedBg(fillHex: String, strokeHex: String, radius: Float): GradientDrawable =
@@ -1609,10 +2086,150 @@ class MainActivity : AppCompatActivity() {
         timerHandler.removeCallbacks(timerRunnable)
         stopBgmPlayer()
         try { visualizer?.release() } catch (_: Exception) {}
+        try { presetReverb?.release() } catch (_: Exception) {}
         try { dynamicsProcessing?.release() } catch (_: Exception) {}
         try { fallbackEqualizer?.release() } catch (_: Exception) {}
         soundPool.release()
         super.onDestroy()
+    }
+
+    // === 24-BAND REAL-TIME SPECTRUM ANALYZER (RTA GAYA EQUATUBE DSP) ===
+    class RtaSpectrumView(context: Context) : View(context) {
+        private val numBands = 24
+        private val barLevels = FloatArray(numBands) { 0.05f }
+        private val peakLevels = FloatArray(numBands) { 0.08f }
+        private val d = context.resources.displayMetrics.density
+
+        private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#090C12"); style = Paint.Style.FILL
+        }
+        private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#1E293B"); strokeWidth = 1f * d
+        }
+        private val barPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+        private val peakPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#F8FAFC"); style = Paint.Style.FILL
+        }
+        private val freqLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#64748B"); textSize = 7.5f * d; textAlign = Paint.Align.CENTER
+        }
+
+        fun updateFftData(fft: ByteArray) {
+            val n = fft.size / 2
+            for (b in 0 until numBands) {
+                val startBin = (2.0.pow((b.toDouble() / numBands) * ln(max(4, n - 2).toDouble()) / ln(2.0))).toInt().coerceIn(1, n - 1)
+                val endBin = (2.0.pow(((b + 1).toDouble() / numBands) * ln(max(4, n - 2).toDouble()) / ln(2.0))).toInt().coerceIn(startBin, n - 1)
+                var maxMag = 0f
+                for (k in startBin..endBin) {
+                    val re = fft[2 * k].toFloat()
+                    val im = fft[2 * k + 1].toFloat()
+                    val mag = hypot(re, im)
+                    if (mag > maxMag) maxMag = mag
+                }
+                val norm = (ln(1f + maxMag) / 5.2f).coerceIn(0.04f, 1.0f)
+                barLevels[b] = max(norm, barLevels[b] * 0.78f)
+                if (barLevels[b] >= peakLevels[b]) {
+                    peakLevels[b] = barLevels[b]
+                } else {
+                    peakLevels[b] = max(barLevels[b], peakLevels[b] - 0.018f)
+                }
+            }
+            postInvalidate()
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            canvas.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), 6f * d, 6f * d, bgPaint)
+
+            val bottomY = height - 11f * d
+            val usableH = bottomY - 4f * d
+            val gap = 2.2f * d
+            val barW = (width - 8f * d - gap * (numBands - 1)) / numBands
+            val startX = 4f * d
+
+            canvas.drawLine(startX, bottomY * 0.35f, width - startX, bottomY * 0.35f, gridPaint)
+            canvas.drawLine(startX, bottomY * 0.70f, width - startX, bottomY * 0.70f, gridPaint)
+
+            val segH = 3.2f * d
+            val segGap = 1.4f * d
+
+            for (i in 0 until numBands) {
+                val left = startX + i * (barW + gap)
+                val barTop = bottomY - barLevels[i] * usableH
+                var y = bottomY - segH
+                while (y >= barTop) {
+                    val ratio = (bottomY - y) / usableH
+                    barPaint.color = when {
+                        ratio > 0.78f -> Color.parseColor("#EF4444")
+                        ratio > 0.52f -> Color.parseColor("#F59E0B")
+                        else -> Color.parseColor("#10B981")
+                    }
+                    canvas.drawRect(left, y, left + barW, y + segH, barPaint)
+                    y -= (segH + segGap)
+                }
+                val peakY = bottomY - peakLevels[i] * usableH
+                canvas.drawRect(left, peakY - 1.5f * d, left + barW, peakY + 0.5f * d, peakPaint)
+            }
+
+            val markers = arrayOf("31Hz", "125Hz", "500Hz", "2kHz", "8kHz", "16kHz")
+            for (m in markers.indices) {
+                val x = (width / 6f) * m + (width / 12f)
+                canvas.drawText(markers[m], x, height - 1.5f * d, freqLabelPaint)
+            }
+        }
+    }
+
+    // === VISUALIZER 5-BAND DYNAMIC COMPRESSOR ===
+    class Dynamic5BandView(
+        context: Context,
+        private val names: Array<String>,
+        private val thresholds: FloatArray,
+        private val ratios: FloatArray,
+        private val gains: FloatArray
+    ) : View(context) {
+        var selectedBand = 0
+        private val d = context.resources.displayMetrics.density
+
+        private val boxPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+        private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1.5f * d }
+        private val grBarPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+        private val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE; textSize = 9.5f * d; textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD
+        }
+        private val subPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#FBBF24"); textSize = 8.5f * d; textAlign = Paint.Align.CENTER; typeface = Typeface.MONOSPACE
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val colW = width / 5f
+            val pad = 3f * d
+            for (i in 0..4) {
+                val left = i * colW + pad
+                val right = (i + 1) * colW - pad
+                val rect = RectF(left, 2f * d, right, height - 2f * d)
+
+                boxPaint.color = if (i == selectedBand) Color.parseColor("#162338") else Color.parseColor("#0D121B")
+                strokePaint.color = if (i == selectedBand) Color.parseColor("#38BDF8") else Color.parseColor("#263248")
+                canvas.drawRoundRect(rect, 6f * d, 6f * d, boxPaint)
+                canvas.drawRoundRect(rect, 6f * d, 6f * d, strokePaint)
+
+                canvas.drawText(names[i], (left + right) / 2f, 14f * d, titlePaint)
+
+                val meterTop = 19f * d
+                val meterBottom = height - 16f * d
+                val meterW = 10f * d
+                val cx = (left + right) / 2f
+                val activity = (((thresholds[i] + 30f) / 30f) * 0.5f + (ratios[i] / 10f) * 0.5f).coerceIn(0.15f, 0.95f)
+                val fillH = (meterBottom - meterTop) * activity
+                grBarPaint.color = if (i == 0) Color.parseColor("#EF4444") else Color.parseColor("#F59E0B")
+                canvas.drawRoundRect(cx - meterW / 2f, meterTop, cx + meterW / 2f, meterTop + fillH, 2f * d, 2f * d, grBarPaint)
+
+                val g = gains[i]
+                val gStr = if (g > 0f) "+${String.format("%.1f", g)}" else String.format("%.1f", g)
+                canvas.drawText(gStr, cx, height - 4.5f * d, subPaint)
+            }
+        }
     }
 
     // === 10-BAND GRAPHIC EQ MODEL FADER FISIK + ANGKA DB ===
@@ -1627,53 +2244,22 @@ class MainActivity : AppCompatActivity() {
         private var selectedBand = -1
         private val d = context.resources.displayMetrics.density
 
-        private val trackBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#0B0F17")
-            style = Paint.Style.FILL
-        }
-        private val trackActivePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#22D3EE")
-            strokeWidth = 3f * d
-            strokeCap = Paint.Cap.ROUND
-        }
-        private val zeroLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#334155")
-            strokeWidth = 1.2f * d
-        }
-        private val capBodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#1E293B")
-            style = Paint.Style.FILL
-        }
-        private val capStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#38BDF8")
-            style = Paint.Style.STROKE
-            strokeWidth = 1.8f * d
-        }
-        private val capGripPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#F8FAFC")
-            strokeWidth = 1.4f * d
-        }
-        private val dbTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#38BDF8")
-            textSize = 8.5f * d
-            textAlign = Paint.Align.CENTER
-            typeface = Typeface.DEFAULT_BOLD
-        }
-        private val freqTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#94A3B8")
-            textSize = 8.5f * d
-            textAlign = Paint.Align.CENTER
-            typeface = Typeface.DEFAULT_BOLD
-        }
+        private val trackBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#0B0F17"); style = Paint.Style.FILL }
+        private val trackActivePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#22D3EE"); strokeWidth = 3f * d; strokeCap = Paint.Cap.ROUND }
+        private val zeroLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#334155"); strokeWidth = 1.2f * d }
+        private val capBodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#1E293B"); style = Paint.Style.FILL }
+        private val capStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#38BDF8"); style = Paint.Style.STROKE; strokeWidth = 1.8f * d }
+        private val capGripPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#F8FAFC"); strokeWidth = 1.4f * d }
+        private val dbTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#38BDF8"); textSize = 8f * d; textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD }
+        private val freqTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#94A3B8"); textSize = 8f * d; textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD }
 
         @SuppressLint("ClickableViewAccessibility")
         override fun onTouchEvent(event: MotionEvent): Boolean {
             if (isLocked) return false
-
             parent?.requestDisallowInterceptTouchEvent(true)
             val colW = width / 10f
-            val topY = 20f * d
-            val bottomY = height - 20f * d
+            val topY = 18f * d
+            val bottomY = height - 18f * d
             val midY = (topY + bottomY) / 2f
             val halfSpan = (bottomY - topY) / 2f
 
@@ -1682,7 +2268,7 @@ class MainActivity : AppCompatActivity() {
                     val idx = (event.x / colW).toInt().coerceIn(0, 9)
                     selectedBand = idx
                     val normY = ((midY - event.y) / halfSpan).coerceIn(-1f, 1f)
-                    val db = (normY * 15f * 2f).roundToInt() / 2f // Kelipatan 0.5 dB agar presisi
+                    val db = (normY * 15f * 2f).roundToInt() / 2f
                     gains[selectedBand] = db
                     onBandChanged(selectedBand, db)
                     invalidate()
@@ -1710,24 +2296,21 @@ class MainActivity : AppCompatActivity() {
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             val colW = width / 10f
-            val topY = 20f * d
-            val bottomY = height - 20f * d
+            val topY = 18f * d
+            val bottomY = height - 18f * d
             val midY = (topY + bottomY) / 2f
             val halfSpan = (bottomY - topY) / 2f
 
-            // Garis referensi tengah 0 dB
             canvas.drawLine(8f * d, midY, width - 8f * d, midY, zeroLinePaint)
-
-            val trackW = 5f * d
-            val capW = min(colW * 0.72f, 22f * d)
-            val capH = 14f * d
+            val trackW = 4.5f * d
+            val capW = min(colW * 0.72f, 21f * d)
+            val capH = 13f * d
 
             for (i in 0..9) {
                 val cx = colW * i + colW / 2f
                 val gain = gains[i]
                 val thumbY = midY - (gain / 15f) * halfSpan
 
-                // Angka dB di bagian atas masing-masing fader
                 dbTextPaint.color = when {
                     isLocked -> Color.parseColor("#64748B")
                     i == selectedBand -> Color.parseColor("#FBBF24")
@@ -1736,19 +2319,12 @@ class MainActivity : AppCompatActivity() {
                     else -> Color.parseColor("#94A3B8")
                 }
                 val dbLabel = if (gain > 0f) "+${String.format("%.1f", gain)}" else String.format("%.1f", gain)
-                canvas.drawText(dbLabel, cx, 12f * d, dbTextPaint)
+                canvas.drawText(dbLabel, cx, 11f * d, dbTextPaint)
 
-                // Rel Fader Vertikal
-                canvas.drawRoundRect(
-                    cx - trackW / 2f, topY, cx + trackW / 2f, bottomY,
-                    2.5f * d, 2.5f * d, trackBgPaint
-                )
-
-                // Garis menyala dari 0 dB ke posisi fader
+                canvas.drawRoundRect(cx - trackW / 2f, topY, cx + trackW / 2f, bottomY, 2f * d, 2f * d, trackBgPaint)
                 trackActivePaint.color = if (isLocked) Color.parseColor("#475569") else Color.parseColor("#22D3EE")
                 canvas.drawLine(cx, midY, cx, thumbY, trackActivePaint)
 
-                // Kepala Tuas (Fader Cap)
                 capBodyPaint.color = if (i == selectedBand) Color.parseColor("#0F172A") else Color.parseColor("#1E293B")
                 capStrokePaint.color = when {
                     isLocked -> Color.parseColor("#64748B")
@@ -1758,17 +2334,13 @@ class MainActivity : AppCompatActivity() {
                 val capRect = RectF(cx - capW / 2f, thumbY - capH / 2f, cx + capW / 2f, thumbY + capH / 2f)
                 canvas.drawRoundRect(capRect, 3f * d, 3f * d, capBodyPaint)
                 canvas.drawRoundRect(capRect, 3f * d, 3f * d, capStrokePaint)
-
-                // Garis tengah pada kepala tuas fisik
                 canvas.drawLine(cx - capW * 0.3f, thumbY, cx + capW * 0.3f, thumbY, capGripPaint)
-
-                // Label Frekuensi di bawah
                 canvas.drawText(freqLabels[i], cx, height - 4f * d, freqTextPaint)
             }
         }
     }
 
-    // === KOMPONEN KUSTOM: ROTARY KNOB ===
+    // === ROTARY KNOB ===
     class RotaryKnobView(
         context: Context,
         private val label: String,
@@ -1786,32 +2358,13 @@ class MainActivity : AppCompatActivity() {
         private val accentColor = Color.parseColor(accentHex)
         private val d = context.resources.displayMetrics.density
 
-        private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE; strokeWidth = 4f * d; strokeCap = Paint.Cap.ROUND
-            color = Color.parseColor("#242D3D")
-        }
-        private val activePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE; strokeWidth = 4f * d; strokeCap = Paint.Cap.ROUND
-            color = accentColor
-        }
-        private val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.FILL; color = Color.parseColor("#141A25")
-        }
-        private val rimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE; strokeWidth = 1f * d; color = Color.parseColor("#3B4861")
-        }
-        private val pointerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE; strokeWidth = 2.2f * d; strokeCap = Paint.Cap.ROUND
-            color = accentColor
-        }
-        private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#94A3B8"); textSize = 8f * d
-            textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD
-        }
-        private val valPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.WHITE; textSize = 9.5f * d
-            textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD
-        }
+        private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 4f * d; strokeCap = Paint.Cap.ROUND; color = Color.parseColor("#242D3D") }
+        private val activePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 4f * d; strokeCap = Paint.Cap.ROUND; color = accentColor }
+        private val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Color.parseColor("#141A25") }
+        private val rimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1f * d; color = Color.parseColor("#3B4861") }
+        private val pointerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 2.2f * d; strokeCap = Paint.Cap.ROUND; color = accentColor }
+        private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#94A3B8"); textSize = 8f * d; textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD }
+        private val valPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = 9.5f * d; textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD }
 
         fun setValue(v: Float) {
             currentVal = v.coerceIn(minVal, maxVal)
@@ -1822,7 +2375,6 @@ class MainActivity : AppCompatActivity() {
         @SuppressLint("ClickableViewAccessibility")
         override fun onTouchEvent(event: MotionEvent): Boolean {
             if (isLocked) return false
-
             parent?.requestDisallowInterceptTouchEvent(true)
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> { lastY = event.y; return true }
@@ -1858,48 +2410,9 @@ class MainActivity : AppCompatActivity() {
             val py = cy + sin(angleRad).toFloat() * (innerR * 0.75f)
             canvas.drawLine(cx, cy, px, py, pointerPaint)
 
-            val formatted = if (minVal < 0 && currentVal > 0.4f) "+${currentVal.toInt()} $unit"
-            else "${currentVal.toInt()} $unit"
+            val formatted = if (minVal < 0 && currentVal > 0.4f) "+${currentVal.toInt()} $unit" else "${currentVal.toInt()} $unit"
             canvas.drawText(formatted, cx, cy + radius + 12f * d, valPaint)
             canvas.drawText(label, cx, cy + radius + 23f * d, labelPaint)
-        }
-    }
-
-    // === STEREO LED VU METER (L & R) ===
-    class StereoVuMeterView(context: Context) : View(context) {
-        private var levelL = 0.05f
-        private var levelR = 0.05f
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        private val d = context.resources.displayMetrics.density
-
-        fun setStereoLevels(l: Float, r: Float) {
-            levelL = l.coerceIn(0.04f, 1f)
-            levelR = r.coerceIn(0.04f, 1f)
-            postInvalidate()
-        }
-
-        override fun onDraw(canvas: Canvas) {
-            super.onDraw(canvas)
-            val segments = 26
-            val gap = 2f * d
-            val segW = (width - gap * (segments - 1)) / segments
-            val rowH = (height - 2f * d) / 2f
-
-            val levels = floatArrayOf(levelL, levelR)
-            for (row in 0..1) {
-                val activeCount = (levels[row] * segments).toInt()
-                val top = row * (rowH + 2f * d)
-                for (i in 0 until segments) {
-                    val left = i * (segW + gap)
-                    val isLit = i < activeCount
-                    paint.color = when {
-                        i >= 22 -> if (isLit) Color.parseColor("#EF4444") else Color.parseColor("#3B181E")
-                        i >= 17 -> if (isLit) Color.parseColor("#F59E0B") else Color.parseColor("#3B2E16")
-                        else -> if (isLit) Color.parseColor("#10B981") else Color.parseColor("#14332B")
-                    }
-                    canvas.drawRoundRect(left, top, left + segW, top + rowH, 1.5f * d, 1.5f * d, paint)
-                }
-            }
         }
     }
 }
