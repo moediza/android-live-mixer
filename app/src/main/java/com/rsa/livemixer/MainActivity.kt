@@ -1426,14 +1426,14 @@ class MainActivity : AppCompatActivity() {
         ensureVisualizerPermissionAndStart()
     }
 
-    // === ENGINE INTI YOUTUBE: ANTI-IKLAN + FULL VIDEO BOX + PITCH SHIFTER TEMPO TETAP + MONO/STEREO MATRIX ===
+// === ENGINE INTI YOUTUBE: ANTI-IKLAN + FULL VIDEO BOX + PITCH SHIFTER TEMPO TETAP + MONO/STEREO MATRIX ===
     private fun injectEarlyCoreEngine(view: WebView?) {
         val js = """
             (function() {
                 if (!window.__ohoEngineV7) {
                     window.__ohoEngineV7 = true;
 
-                    // 1. Paksa halaman selalu terlihat agar YouTube tidak auto-pause
+                    // 1. Paksa halaman selalu dianggap terlihat agar YouTube tidak auto-pause
                     try {
                         Object.defineProperty(document, 'hidden', { get: function() { return false; } });
                         Object.defineProperty(document, 'visibilityState', { get: function() { return 'visible'; } });
@@ -1495,7 +1495,7 @@ class MainActivity : AppCompatActivity() {
                         return origXhrSend.apply(this, arguments);
                     };
 
-                    // 3. CSS: Sembunyikan iklan & buat video memenuhi penuh bingkai layar saat menonton (/watch)
+                    // 3. CSS: Sembunyikan iklan & buat pembungkus video memenuhi layar penuh tanpa menutupi kontrol sentuh
                     const style = document.createElement('style');
                     style.innerHTML = `
                         ytm-promoted-sparkles-web-renderer,
@@ -1517,12 +1517,7 @@ class MainActivity : AppCompatActivity() {
                         html.oho-watch-full ytm-item-section-renderer {
                             display: none !important;
                         }
-                        html.oho-watch-full #player-container-id,
-                        html.oho-watch-full .player-container,
-                        html.oho-watch-full #movie_player,
-                        html.oho-watch-full .html5-video-player,
-                        html.oho-watch-full .html5-video-container,
-                        html.oho-watch-full video {
+                        html.oho-watch-full #player-container-id {
                             position: fixed !important;
                             top: 0 !important;
                             left: 0 !important;
@@ -1532,20 +1527,31 @@ class MainActivity : AppCompatActivity() {
                             max-height: 100vh !important;
                             margin: 0 !important;
                             padding: 0 !important;
-                            object-fit: cover !important;
                             z-index: 9999 !important;
                             background: #000 !important;
+                        }
+                        html.oho-watch-full .player-container,
+                        html.oho-watch-full #movie_player,
+                        html.oho-watch-full .html5-video-player,
+                        html.oho-watch-full .html5-video-container,
+                        html.oho-watch-full video {
+                            width: 100% !important;
+                            height: 100% !important;
+                            max-width: 100% !important;
+                            max-height: 100% !important;
+                            top: 0 !important;
+                            left: 0 !important;
+                            object-fit: cover !important;
                         }
                     `;
                     (document.head || document.documentElement).appendChild(style);
 
-                    // 4. Granular Real-Time Pitch Shifter (Tempo Tetap 1.0x Original!) + Channel Matrix (Stereo/Mono/L/R)
+                    // 4. Granular Real-Time Pitch Shifter (Tempo Tetap 1.0x Original) + Channel Matrix
                     window.__ohoPitchSteps = 0;
                     window.__ohoRouteMode = 0;
 
                     function createGranularPitchNode(ctx) {
                         const bufferTime = 0.08;
-                        const fadeTime = 0.02;
                         const delayA = ctx.createDelay(0.5);
                         const delayB = ctx.createDelay(0.5);
                         const gainA = ctx.createGain();
@@ -1572,11 +1578,8 @@ class MainActivity : AppCompatActivity() {
                             const pB = (pA + 0.5) % 1.0;
                             curveA[i] = pA * bufferTime;
                             curveB[i] = pB * bufferTime;
-                            winA[i] = sinWindow(pA);
-                            winB[i] = sinWindow(pB);
-                        }
-                        function sinWindow(p) {
-                            return Math.sin(Math.PI * p);
+                            winA[i] = Math.sin(Math.PI * pA);
+                            winB[i] = Math.sin(Math.PI * pB);
                         }
 
                         const lfo = ctx.createBufferSource();
@@ -1622,18 +1625,15 @@ class MainActivity : AppCompatActivity() {
                     window.__ohoUpdateAudioProcessor = function() {
                         const v = document.querySelector('video');
                         if (!v) return;
-                        // Kunci kecepatan video selalu 1.0x agar TEMPO TETAP ORIGINAL!
                         v.preservesPitch = true;
                         v.playbackRate = 1.0;
 
-                        if (!v.__ohoAudioPipe) {
+                        if (!v.__ohoAudioPipe && !v.__ohoPipeFailed) {
                             try {
-                                v.crossOrigin = 'anonymous';
                                 const Ctx = window.AudioContext || window.webkitAudioContext;
                                 const ctx = new Ctx();
                                 const src = ctx.createMediaElementSource(v);
 
-                                // Matrix Kanal: Stereo (0), Mono (1), Kiri Only (2), Kanan Only (3)
                                 const splitter = ctx.createChannelSplitter(2);
                                 const gLL = ctx.createGain();
                                 const gLR = ctx.createGain();
@@ -1652,7 +1652,6 @@ class MainActivity : AppCompatActivity() {
                                 gLR.connect(merger, 0, 1);
                                 gRR.connect(merger, 0, 1);
 
-                                // Jalur Bypass (Nada = 0) & Jalur Pitch Shift (Nada != 0)
                                 const dryGain = ctx.createGain();
                                 const wetGain = ctx.createGain();
                                 const pitchNode = createGranularPitchNode(ctx);
@@ -1669,24 +1668,26 @@ class MainActivity : AppCompatActivity() {
                                     dryGain: dryGain, wetGain: wetGain, pitchNode: pitchNode
                                 };
                             } catch (e) {
+                                v.__ohoPipeFailed = true;
                                 return;
                             }
                         }
 
                         const p = v.__ohoAudioPipe;
+                        if (!p) return;
                         if (p.ctx.state === 'suspended') p.ctx.resume();
 
                         const m = window.__ohoRouteMode || 0;
-                        if (m === 0) { // STEREO L+R
+                        if (m === 0) {
                             p.gLL.gain.value = 1.0; p.gLR.gain.value = 0.0;
                             p.gRL.gain.value = 0.0; p.gRR.gain.value = 1.0;
-                        } else if (m === 1) { // MONO L+R (Campur L+R 50%-50% ke kedua kanal)
+                        } else if (m === 1) {
                             p.gLL.gain.value = 0.5; p.gLR.gain.value = 0.5;
                             p.gRL.gain.value = 0.5; p.gRR.gain.value = 0.5;
-                        } else if (m === 2) { // KIRI L ONLY (Saluran L penuh ke L & R)
+                        } else if (m === 2) {
                             p.gLL.gain.value = 1.0; p.gLR.gain.value = 1.0;
                             p.gRL.gain.value = 0.0; p.gRR.gain.value = 0.0;
-                        } else if (m === 3) { // KANAN R ONLY (Saluran R penuh ke L & R)
+                        } else if (m === 3) {
                             p.gLL.gain.value = 0.0; p.gLR.gain.value = 0.0;
                             p.gRL.gain.value = 1.0; p.gRR.gain.value = 1.0;
                         }
