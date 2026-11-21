@@ -115,8 +115,8 @@ DataCallbackResult AudioEngine::onAudioReady(AudioStream *stream, void *audioDat
 
     for (int32_t i = 0; i < numFrames; ++i) {
         float inSample = 0.0f;
-        ResultWithValue<int32_t> readRes = inStream->read(&inSample, 1, 0);
-        float sample = (readRes.ok() && readRes.value() > 0) ? (inSample * gain) : 0.0f;
+        auto readRes = inStream->read(&inSample, 1, 0);
+        float sample = (readRes && readRes.value() > 0) ? (inSample * gain) : 0.0f;
 
         sample = eqLow.process(sample);
         sample = eqMid.process(sample);
