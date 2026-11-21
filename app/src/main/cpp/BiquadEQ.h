@@ -1,37 +1,65 @@
 #pragma once
 #include <cmath>
-#include <atomic>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 class BiquadFilter {
 public:
     void setPeaking(float sampleRate, float freq, float q, float gainDb) {
-        if (sampleRate <= 0.0f) return;
-        float A = std::pow(10.0f, gainDb / 40.0f);
-        float w0 = 2.0f * static_cast<float>(M_PI) * freq / sampleRate;
-        float alpha = std::sin(w0) / (2.0f * q);
+        if (sampleRate <= 0.0f) {
+            sampleRate = 48000.0f;
+        }
+        float clampedFreq = freq;
+        if (clampedFreq < 10.0f) clampedFreq = 10.0f;
+        if (clampedFreq > sampleRate * 0.45f) clampedFreq = sampleRate * 0.45f;
 
-        float b0_raw = 1.0f + alpha * A;
-        float b1_raw = -2.0f * std::cos(w0);
-        float b2_raw = 1.0f - alpha * A;
-        float a0_raw = 1.0f + alpha / A;
-        float a1_raw = -2.0f * std::cos(w0);
-        float a2_raw = 1.0f - alpha / A;
+        float safeQ = (q <= 0.05f) ? 1.0f : q;
+        float a = std::pow(10.0f, gainDb / 40.0f);
+        float omega = 2.0f * static_cast<float>(M_PI) * clampedFreq / sampleRate;
+        float sinOmega = std::sin(omega);
+        float cosOmega = std::cos(omega);
+        float alpha = sinOmega / (2.0f * safeQ);
 
-        b0.store(b0_raw / a0_raw);
-        b1.store(b1_raw / a0_raw);
-        b2.store(b2_raw / a0_raw);
-        a1.store(a1_raw / a0_raw);
-        a2.store(a2_raw / a0_raw);
+        float b0 = 1.0f + alpha * a;
+        float b1 = -2.0f * cosOmega;
+        float b2 = 1.0f - alpha * a;
+        float a0 = 1.0f + alpha / a;
+        float a1 = -2.0f * cosOmega;
+        float a2 = 1.0f - alpha / a;
+
+        if (std::abs(a0) < 1e-9f) {
+            reset();
+            return;
+        }
+
+        b0_ = b0 / a0;
+        b1_ = b1 / a0;
+        b2_ = b2 / a0;
+        a1_ = a1 / a0;
+        a2_ = a2 / a0;
+    }
+
+    void reset() {
+        b0_ = 1.0f;
+        b1_ = 0.0f;
+        b2_ = 0.0f;
+        a1_ = 0.0f;
+        a2_ = 0.0f;
+        z1_ = 0.0f;
+        z2_ = 0.0f;
     }
 
     float process(float in) {
-        float out = b0.load() * in + b1.load() * x1 + b2.load() * x2 - a1.load() * y1 - a2.load() * y2;
-        x2 = x1; x1 = in;
-        y2 = y1; y1 = out;
+        float out = b0_ * in + z1_;
+        z1_ = b1_ * in - a1_ * out + z2_;
+        z2_ = b2_ * in - a2_ * out;
         return out;
     }
 
 private:
-    std::atomic<float> b0{1.0f}, b1{0.0f}, b2{0.0f}, a1{0.0f}, a2{0.0f};
-    float x1 = 0.0f, x2 = 0.0f, y1 = 0.0f, y2 = 0.0f;
+    float b0_ = 1.0f, b1_ = 0.0f, b2_ = 0.0f;
+    float a1_ = 0.0f, a2_ = 0.0f;
+    float z1_ = 0.0f, z2_ = 0.0f;
 };
