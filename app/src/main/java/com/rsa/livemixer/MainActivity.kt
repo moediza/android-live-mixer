@@ -62,8 +62,8 @@ class MainActivity : AppCompatActivity() {
     private var currentBank = 0
 
     // Parameter Gain, Volume & Pitch
-    private var boostLeftDb = 6
-    private var boostRightDb = 6
+    private var boostLeftDb = 10
+    private var boostRightDb = 10
     private var normalMusicVolume = 85
     private var currentMusicVolume = 85
     private var sfxVolume = 100
@@ -74,9 +74,9 @@ class MainActivity : AppCompatActivity() {
     private var selectedDynBand = 0
     private val dynBandNames = arrayOf("SUB", "LOW", "MID", "HIGH", "AIR")
     private val dynCutoffs = floatArrayOf(120f, 450f, 2200f, 7500f, 20000f)
-    private val dynThresholds = floatArrayOf(-12f, -10f, -10f, -12f, -14f)
-    private val dynRatios = floatArrayOf(2.5f, 2.0f, 2.0f, 2.2f, 2.5f)
-    private val dynPostGains = floatArrayOf(2.0f, 0.5f, 0.0f, 1.5f, 2.5f)
+    private val dynThresholds = floatArrayOf(-18f, -15f, -10f, -12f, -14f)
+    private val dynRatios = floatArrayOf(3.8f, 2.8f, 2.0f, 2.2f, 2.5f)
+    private val dynPostGains = floatArrayOf(5.5f, 3.0f, 0.0f, 1.5f, 2.5f)
 
     // Parameter Crossover & Limiter
     private var hpfCutoffHz = 30f
@@ -1785,8 +1785,12 @@ class MainActivity : AppCompatActivity() {
                             }
                         }
 
-                        v.preservesPitch = true;
-                        v.playbackRate = 1.0;
+                        if (v.__ohoAudioPipe && !v.__ohoCorsBlocked) {
+    v.preservesPitch = true;
+    v.mozPreservesPitch = true;
+    v.webkitPreservesPitch = true;
+    v.playbackRate = 1.0;
+}
 
                         if (m === 0) {
                             p.gLL.gain.value = 1.0; p.gLR.gain.value = 0.0;
@@ -1813,33 +1817,46 @@ class MainActivity : AppCompatActivity() {
                     };
 
                     // 5. Penjaga Iklan Instan (Skip + 16x Fast-Forward) & Anti-Auto-Pause
-                    let wasAd = false;
-                    let prevMuted = false;
+let wasAd = false;
+let prevMuted = false;
 
-                    function crushYoutubeAds() {
-                        const player = document.querySelector('.html5-video-player');
-                        const video = document.querySelector('video');
-                        const adBadge = document.querySelector('.ytp-ad-preview-container, .ytp-ad-text, .ytp-ad-visit-advertiser-button');
-                        const isAd = (player && (player.classList.contains('ad-showing') || player.classList.contains('ad-interrupting'))) || !!adBadge;
+function crushYoutubeAds() {
+    const player = document.querySelector('.html5-video-player');
+    const video = document.querySelector('video');
+    const adBadge = document.querySelector('.ytp-ad-preview-container, .ytp-ad-text, .ytp-ad-visit-advertiser-button, ytm-promoted-sparkles-web-renderer');
+    const skipBtns = document.querySelectorAll('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button, .ytm-ad-skip-button, button[class*="skip"]');
+    const isAd = (player && (player.classList.contains('ad-showing') || player.classList.contains('ad-interrupting'))) || !!adBadge || skipBtns.length > 0;
 
-                        if (isAd && video) {
-                            if (!wasAd) {
-                                prevMuted = video.muted;
-                                wasAd = true;
-                            }
-                            video.muted = true;
-                            video.playbackRate = 16.0;
-                            if (isFinite(video.duration) && video.duration > 0.2) {
-                                video.currentTime = Math.max(0, video.duration - 0.1);
-                            }
-                            const skipBtns = document.querySelectorAll('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button, .ytm-ad-skip-button, button[class*="skip"]');
-                            skipBtns.forEach(function(b) { try { b.click(); } catch(e) {} });
-                        } else if (!isAd && wasAd && video) {
-                            video.muted = prevMuted;
-                            wasAd = false;
-                            window.__ohoUpdateAudioProcessor();
-                        }
-                    }
+    if (isAd) {
+        if (!wasAd && video) {
+            prevMuted = video.muted;
+            wasAd = true;
+        }
+
+        // 1. Coba tekan tombol lewati secepat mungkin
+        skipBtns.forEach(function(b) {
+            try { b.click(); } catch (e) {}
+        });
+
+        // 2. Jika belum berpindah, bisukan & percepat agar cepat habis
+        if (video) {
+            video.muted = true;
+            try { video.playbackRate = 16.0; } catch (e) {}
+            if (isFinite(video.duration) && video.duration > 0.3 && video.currentTime < video.duration - 0.25) {
+                try { video.currentTime = video.duration - 0.2; } catch (e) {}
+            }
+        }
+    } else if (!isAd && wasAd) {
+        if (video) {
+            video.muted = prevMuted;
+            try { video.playbackRate = 1.0; } catch (e) {}
+        }
+        wasAd = false;
+        if (typeof window.__ohoUpdateAudioProcessor === 'function') {
+            window.__ohoUpdateAudioProcessor();
+        }
+    }
+}
 
                     const obs = new MutationObserver(crushYoutubeAds);
                     obs.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
@@ -2074,19 +2091,17 @@ class MainActivity : AppCompatActivity() {
         val js = """
             (function() {
                 window.__ohoPitchSteps = $steps;
+                if (typeof window.__ohoUnlockAudioContext === 'function') {
+                    window.__ohoUnlockAudioContext();
+                }
+                var v = document.querySelector('video');
+                if (v) {
+                    v.preservesPitch = true;
+                    v.mozPreservesPitch = true;
+                    v.webkitPreservesPitch = true;
+                }
                 if (typeof window.__ohoUpdateAudioProcessor === 'function') {
                     window.__ohoUpdateAudioProcessor();
-                } else {
-                    var v = document.querySelector('video');
-                    if (v) {
-                        if ($steps === 0) {
-                            v.preservesPitch = true;
-                            v.playbackRate = 1.0;
-                        } else {
-                            v.preservesPitch = false;
-                            v.playbackRate = Math.pow(2, $steps / 12);
-                        }
-                    }
                 }
             })();
         """.trimIndent()
@@ -2195,9 +2210,9 @@ class MainActivity : AppCompatActivity() {
                     val limiter = dynamicsProcessing!!.getLimiterByChannelIndex(ch)
                     limiter.isEnabled = true
                     limiter.threshold = limiterThreshDb
-                    limiter.ratio = 12f
-                    limiter.attackTime = 1.5f
-                    limiter.releaseTime = 50f
+                    limiter.ratio = 6f
+                    limiter.attackTime = 3.0f
+                    limiter.releaseTime = 65f
                     dynamicsProcessing!!.setLimiterByChannelIndex(ch, limiter)
                 }
             }
@@ -2501,7 +2516,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun restoreLastSessionState() {
         val prefs = getSharedPreferences("OhoMixerPrefs", Context.MODE_PRIVATE)
-        val defaultDangdut10 = floatArrayOf(6.0f, 5.5f, 3.5f, -1.0f, -2.5f, -2.0f, 1.5f, 3.5f, 4.5f, 5.0f)
+        val defaultDangdut10 = floatArrayOf(8.5f, 8.0f, 4.5f, -2.0f, -3.5f, -2.0f, 1.5f, 3.5f, 4.5f, 5.0f)
         for (i in 0..9) currentGains10[i] = prefs.getFloat("last10_band_$i", defaultDangdut10[i])
         for (i in 0..4) {
             dynThresholds[i] = prefs.getFloat("dyn_th_$i", dynThresholds[i])
@@ -2518,8 +2533,8 @@ class MainActivity : AppCompatActivity() {
         isSubBassActive = prefs.getBoolean("last_sub_bass", false)
         isClarityActive = prefs.getBoolean("last_clarity", false)
         channelRouteMode = prefs.getInt("last_route_mode", 0)
-        boostLeftDb = prefs.getInt("last_boost_l", 6)
-        boostRightDb = prefs.getInt("last_boost_r", 6)
+        boostLeftDb = prefs.getInt("last_boost_l", 10)
+        boostRightDb = prefs.getInt("last_boost_r", 10)
         normalMusicVolume = prefs.getInt("last_music_vol", 85)
         currentMusicVolume = normalMusicVolume
         sfxVolume = prefs.getInt("last_sfx_vol", 100)
@@ -2691,7 +2706,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // === 24-BAND REAL-TIME SPECTRUM ANALYZER (SEMI-TRANSPARAN AGAR MUSIK YOUTUBE ANTI-PAUSE) ===
+    // === 24-BAND REAL-TIME SPECTRUM ANALYZER (MODERN NEON GRADIENT + WAVE CURVE) ===
     class RtaSpectrumView(context: Context) : View(context) {
         private val numBands = 24
         private val barLevels = FloatArray(numBands) { 0.06f }
@@ -2700,21 +2715,46 @@ class MainActivity : AppCompatActivity() {
         private val d = context.resources.displayMetrics.density
 
         private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#EA090C12"); style = Paint.Style.FILL
+            color = Color.parseColor("#B8060911") // Lebih transparan agar video tetap terlihat jelas
+            style = Paint.Style.FILL
         }
         private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#1E293B"); strokeWidth = 1f * d
+            color = Color.parseColor("#26334155")
+            strokeWidth = 1f * d
         }
-        private val barPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+        private val barPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+        }
+        private val glowLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#38BDF8")
+            style = Paint.Style.STROKE
+            strokeWidth = 2f * d
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+        }
+        private val glowFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+        }
         private val peakPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#F8FAFC"); style = Paint.Style.FILL
+            color = Color.parseColor("#F43F5E")
+            style = Paint.Style.FILL
         }
         private val freqLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#94A3B8"); textSize = 8f * d; textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD
+            color = Color.parseColor("#94A3B8")
+            textSize = 7.5f * d
+            textAlign = Paint.Align.CENTER
+            typeface = Typeface.DEFAULT_BOLD
         }
         private val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#38BDF8"); textSize = 8.5f * d; textAlign = Paint.Align.LEFT; typeface = Typeface.DEFAULT_BOLD
+            color = Color.parseColor("#38BDF8")
+            textSize = 8.5f * d
+            textAlign = Paint.Align.LEFT
+            typeface = Typeface.DEFAULT_BOLD
         }
+
+        private val wavePath = Path()
+        private val areaPath = Path()
+        private var lastHeight = 0f
 
         fun updateFftData(fft: ByteArray) {
             val n = fft.size / 2
@@ -2731,11 +2771,11 @@ class MainActivity : AppCompatActivity() {
                 }
                 totalEnergy += maxMag
                 val norm = (ln(1f + maxMag * 5.8f) / 3.8f).coerceIn(0.05f, 1.0f)
-                barLevels[b] = max(norm, barLevels[b] * 0.76f)
+                barLevels[b] = max(norm, barLevels[b] * 0.78f)
                 if (barLevels[b] >= peakLevels[b]) {
                     peakLevels[b] = barLevels[b]
                 } else {
-                    peakLevels[b] = max(barLevels[b], peakLevels[b] - 0.016f)
+                    peakLevels[b] = max(barLevels[b], peakLevels[b] - 0.014f)
                 }
             }
             if (totalEnergy > 1f) {
@@ -2757,11 +2797,11 @@ class MainActivity : AppCompatActivity() {
                 }
                 val avg = (sum / step) * 4.0f
                 val shaped = (avg * (1.15f - (b.toFloat() / numBands) * 0.45f)).coerceIn(0.05f, 1.0f)
-                barLevels[b] = max(shaped, barLevels[b] * 0.76f)
+                barLevels[b] = max(shaped, barLevels[b] * 0.78f)
                 if (barLevels[b] >= peakLevels[b]) {
                     peakLevels[b] = barLevels[b]
                 } else {
-                    peakLevels[b] = max(barLevels[b], peakLevels[b] - 0.016f)
+                    peakLevels[b] = max(barLevels[b], peakLevels[b] - 0.014f)
                 }
             }
             postInvalidate()
@@ -2769,44 +2809,96 @@ class MainActivity : AppCompatActivity() {
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-            canvas.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), 6f * d, 6f * d, bgPaint)
-            canvas.drawText("DLMS 24-BAND REAL-TIME SPECTRUM ANALYZER", 8f * d, 12f * d, titlePaint)
+            val w = width.toFloat()
+            val h = height.toFloat()
+            canvas.drawRoundRect(0f, 0f, w, h, 6f * d, 6f * d, bgPaint)
+            canvas.drawText("OHO DSP • 24-BAND SPECTRUM", 10f * d, 13f * d, titlePaint)
 
-            val topY = 17f * d
-            val bottomY = height - 13f * d
+            val topY = 20f * d
+            val bottomY = h - 15f * d
             val usableH = bottomY - topY
-            val gap = 2.4f * d
-            val barW = (width - 12f * d - gap * (numBands - 1)) / numBands
-            val startX = 6f * d
+            val startX = 10f * d
+            val endX = w - 10f * d
+            val totalW = endX - startX
+            val stepX = totalW / numBands
+            val barW = stepX * 0.46f // Bar lebih ramping agar lega & elegan
 
-            canvas.drawLine(startX, topY + usableH * 0.33f, width - startX, topY + usableH * 0.33f, gridPaint)
-            canvas.drawLine(startX, topY + usableH * 0.66f, width - startX, topY + usableH * 0.66f, gridPaint)
-
-            val segH = 3.5f * d
-            val segGap = 1.5f * d
-
-            for (i in 0 until numBands) {
-                val left = startX + i * (barW + gap)
-                val barTop = bottomY - barLevels[i] * usableH
-                var y = bottomY - segH
-                while (y >= barTop) {
-                    val ratio = (bottomY - y) / usableH
-                    barPaint.color = when {
-                        ratio > 0.78f -> Color.parseColor("#EF4444")
-                        ratio > 0.52f -> Color.parseColor("#F59E0B")
-                        else -> Color.parseColor("#10B981")
-                    }
-                    canvas.drawRect(left, y, left + barW, y + segH, barPaint)
-                    y -= (segH + segGap)
-                }
-                val peakY = bottomY - peakLevels[i] * usableH
-                canvas.drawRect(left, peakY - 1.5f * d, left + barW, peakY + 0.5f * d, peakPaint)
+            // Inisialisasi gradasi warna saat ukuran view berubah
+            if (h != lastHeight && h > 0f) {
+                lastHeight = h
+                barPaint.shader = LinearGradient(
+                    0f, bottomY, 0f, topY,
+                    intArrayOf(
+                        Color.parseColor("#06B6D4"), // Cyan di bawah (Sub/Bass)
+                        Color.parseColor("#3B82F6"), // Biru
+                        Color.parseColor("#8B5CF6"), // Ungu
+                        Color.parseColor("#EC4899")  // Pink/Magenta di puncak
+                    ),
+                    floatArrayOf(0.0f, 0.35f, 0.70f, 1.0f),
+                    Shader.TileMode.CLAMP
+                )
+                glowFillPaint.shader = LinearGradient(
+                    0f, topY, 0f, bottomY,
+                    Color.parseColor("#3838BDF8"),
+                    Color.parseColor("#0038BDF8"),
+                    Shader.TileMode.CLAMP
+                )
             }
 
+            // Garis grid horizontal tipis
+            canvas.drawLine(startX, topY + usableH * 0.33f, endX, topY + usableH * 0.33f, gridPaint)
+            canvas.drawLine(startX, topY + usableH * 0.66f, endX, topY + usableH * 0.66f, gridPaint)
+
+            // 1. Gambar Kurva Gelombang Halus (Spline Wave) di latar belakang bar
+            wavePath.reset()
+            areaPath.reset()
+            var prevX = startX + stepX * 0.5f
+            var prevY = bottomY - barLevels[0] * usableH
+            wavePath.moveTo(prevX, prevY)
+            areaPath.moveTo(prevX, bottomY)
+            areaPath.lineTo(prevX, prevY)
+
+            for (i in 1 until numBands) {
+                val cx = startX + i * stepX + stepX * 0.5f
+                val cy = bottomY - barLevels[i] * usableH
+                val midX = (prevX + cx) / 2f
+                wavePath.cubicTo(midX, prevY, midX, cy, cx, cy)
+                areaPath.cubicTo(midX, prevY, midX, cy, cx, cy)
+                prevX = cx
+                prevY = cy
+            }
+            areaPath.lineTo(prevX, bottomY)
+            areaPath.close()
+            canvas.drawPath(areaPath, glowFillPaint)
+            canvas.drawPath(wavePath, glowLinePaint)
+
+            // 2. Gambar Batang Kapsul Gradasi & Titik Peak
+            for (i in 0 until numBands) {
+                val cx = startX + i * stepX + stepX * 0.5f
+                val left = cx - barW / 2f
+                val right = cx + barW / 2f
+                val barTop = bottomY - barLevels[i] * usableH
+
+                canvas.drawRoundRect(left, barTop, right, bottomY, barW / 2f, barW / 2f, barPaint)
+
+                // Titik Peak melayang di atas bar
+                val peakY = bottomY - peakLevels[i] * usableH
+                canvas.drawRoundRect(
+                    left - 0.8f * d,
+                    peakY - 2.2f * d,
+                    right + 0.8f * d,
+                    peakY,
+                    1.5f * d,
+                    1.5f * d,
+                    peakPaint
+                )
+            }
+
+            // Label frekuensi di bawah
             val markers = arrayOf("31Hz", "125Hz", "500Hz", "2kHz", "8kHz", "16kHz")
             for (m in markers.indices) {
-                val x = (width / 6f) * m + (width / 12f)
-                canvas.drawText(markers[m], x, height - 2f * d, freqLabelPaint)
+                val x = (w / 6f) * m + (w / 12f)
+                canvas.drawText(markers[m], x, h - 3f * d, freqLabelPaint)
             }
         }
     }
