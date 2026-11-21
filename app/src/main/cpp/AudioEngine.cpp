@@ -111,13 +111,12 @@ DataCallbackResult AudioEngine::onAudioReady(AudioStream *stream, void *audioDat
         return DataCallbackResult::Continue;
     }
 
-    float inSample = 0.0f;
     float gain = micGain.load(std::memory_order_relaxed);
 
     for (int32_t i = 0; i < numFrames; ++i) {
-        int32_t framesRead = 0;
-        Result res = inStream->read(&inSample, 1, &framesRead, 0);
-        float sample = (res == Result::OK && framesRead > 0) ? (inSample * gain) : 0.0f;
+        float inSample = 0.0f;
+        ResultWithValue<int32_t> readRes = inStream->read(&inSample, 1, 0);
+        float sample = (readRes.ok() && readRes.value() > 0) ? (inSample * gain) : 0.0f;
 
         sample = eqLow.process(sample);
         sample = eqMid.process(sample);
