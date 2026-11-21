@@ -62,8 +62,8 @@ class MainActivity : AppCompatActivity() {
     private var currentBank = 0
 
     // Parameter Gain, Volume & Pitch
-    private var boostLeftDb = 10
-    private var boostRightDb = 10
+    private var boostLeftDb = 6
+    private var boostRightDb = 6
     private var normalMusicVolume = 85
     private var currentMusicVolume = 85
     private var sfxVolume = 100
@@ -74,9 +74,9 @@ class MainActivity : AppCompatActivity() {
     private var selectedDynBand = 0
     private val dynBandNames = arrayOf("SUB", "LOW", "MID", "HIGH", "AIR")
     private val dynCutoffs = floatArrayOf(120f, 450f, 2200f, 7500f, 20000f)
-    private val dynThresholds = floatArrayOf(-18f, -15f, -10f, -12f, -14f)
-    private val dynRatios = floatArrayOf(3.8f, 2.8f, 2.0f, 2.2f, 2.5f)
-    private val dynPostGains = floatArrayOf(5.5f, 3.0f, 0.0f, 1.5f, 2.5f)
+    private val dynThresholds = floatArrayOf(-12f, -10f, -10f, -12f, -14f)
+    private val dynRatios = floatArrayOf(2.5f, 2.0f, 2.0f, 2.2f, 2.5f)
+    private val dynPostGains = floatArrayOf(2.0f, 0.5f, 0.0f, 1.5f, 2.5f)
 
     // Parameter Crossover & Limiter
     private var hpfCutoffHz = 30f
@@ -525,12 +525,13 @@ class MainActivity : AppCompatActivity() {
         deckHeaderRow.addView(btnSearchYt)
         ytCard.addView(deckHeaderRow)
 
+        // Tinggi layar video lebih lega (±48% layar HP, 320dp - 360dp) namun tombol bawah tetap terlihat
         val stageHeight = (screenHeightPx() * 0.48f).toInt().coerceIn(dp(320), dp(360))
         deckStageFrame = FrameLayout(this).apply {
             layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, stageHeight)
         }
 
-        // Lapisan Video YouTube Full (Deep Ad-Blocker v7.2)
+        // Lapisan Video YouTube Full
         ytWebView = WebView(this).apply {
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
@@ -548,18 +549,15 @@ class MainActivity : AppCompatActivity() {
                     "doubleclick.net", "googlesyndication.com", "googleadservices.com",
                     "adservice.google", "pagead2.googlesyndication.com", "ads.youtube.com",
                     "s0.2mdn.net", "static.doubleclick.net", "pubads.g.doubleclick.net",
-                    "imasdk.googleapis.com", "securepubads.g.doubleclick.net", "tpc.googlesyndication.com",
-                    "youtube.com/pagead", "youtube.com/api/stats/ads", "youtube.com/ptracking"
+                    "imasdk.googleapis.com", "securepubads.g.doubleclick.net", "tpc.googlesyndication.com"
                 )
 
                 override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
                     val url = request?.url?.toString()?.lowercase() ?: return super.shouldInterceptRequest(view, request)
                     val isAdUrl = adHosts.any { url.contains(it) } ||
-                            url.contains("/pagead/") || url.contains("/pcs/activeview") ||
-                            url.contains("/api/stats/ads") || url.contains("/ptracking") ||
-                            url.contains("ad_type=") || url.contains("adformat=") ||
-                            url.contains("&adurl=") || url.contains("&oad=") ||
-                            url.contains("/get_midroll_info") || url.contains("log_event?alt=json")
+                            url.contains("/pagead/") || url.contains("/api/stats/ads") ||
+                            url.contains("/ptracking") || url.contains("ad_type=") ||
+                            url.contains("adformat=") || url.contains("&adurl=") || url.contains("/get_midroll_info")
                     return if (isAdUrl) WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
                     else super.shouldInterceptRequest(view, request)
                 }
@@ -582,15 +580,15 @@ class MainActivity : AppCompatActivity() {
             loadUrl("https://m.youtube.com")
 
             setOnTouchListener { v, event ->
-                v.requestFocus()
-                if (event.action == MotionEvent.ACTION_DOWN) {
-                    ytWebView.evaluateJavascript("if(typeof window.__ohoUnlockAudioContext==='function'){ window.__ohoUnlockAudioContext(); }", null)
-                }
-                if (event.action == MotionEvent.ACTION_MOVE) {
-                    v.parent?.requestDisallowInterceptTouchEvent(true)
-                }
-                false
-            }
+             v.requestFocus()
+             if (event.action == MotionEvent.ACTION_DOWN) {
+                 ytWebView.evaluateJavascript("if(typeof window.__ohoUnlockAudioContext==='function'){ window.__ohoUnlockAudioContext(); }", null)
+             }
+             if (event.action == MotionEvent.ACTION_MOVE) {
+                 v.parent?.requestDisallowInterceptTouchEvent(true)
+             }
+             false
+         }
         }
         deckStageFrame.addView(ytWebView)
 
@@ -1432,12 +1430,12 @@ class MainActivity : AppCompatActivity() {
         ensureVisualizerPermissionAndStart()
     }
 
-    // === ENGINE INTI YOUTUBE: DEEP AD-BLOCKER v7.2 + FULL VIDEO BOX + COMBO PITCH SHIFTER ===
+    // === ENGINE INTI YOUTUBE: ANTI-IKLAN + FULL VIDEO BOX + COMBO PITCH SHIFTER (TEMPO TETAP + AUTO FALLBACK) ===
     private fun injectEarlyCoreEngine(view: WebView?) {
         val js = """
             (function() {
-                if (!window.__ohoEngineV72) {
-                    window.__ohoEngineV72 = true;
+                if (!window.__ohoEngineV71) {
+                    window.__ohoEngineV71 = true;
 
                     // 1. Paksa halaman selalu terlihat agar YouTube tidak auto-pause
                     try {
@@ -1445,54 +1443,21 @@ class MainActivity : AppCompatActivity() {
                         Object.defineProperty(document, 'visibilityState', { get: function() { return 'visible'; } });
                     } catch (e) {}
 
-                    // 2. Pembersih rekursif semua kunci iklan di dalam JSON YouTube
-                    const AD_KEYS = [
-                        'adPlacements', 'playerAds', 'adSlots', 'adBreakHeartbeatParams',
-                        'adBreakParams', 'promotedSparklesWebRenderer', 'adSlotRenderer',
-                        'inFeedAdLayoutRenderer', 'bannerPromoRenderer', 'statementBannerRenderer',
-                        'carouselAdRenderer', 'compactPromotedVideoRenderer'
-                    ];
-
-                    function deepStripAds(obj, depth) {
-                        if (!obj || typeof obj !== 'object' || (depth || 0) > 10) return obj;
-                        if (Array.isArray(obj)) {
-                            for (let i = obj.length - 1; i >= 0; i--) {
-                                const item = obj[i];
-                                if (item && typeof item === 'object') {
-                                    if (item.adSlotRenderer || item.promotedSparklesWebRenderer || item.inFeedAdLayoutRenderer) {
-                                        obj.splice(i, 1);
-                                        continue;
-                                    }
-                                    deepStripAds(item, (depth || 0) + 1);
-                                }
-                            }
-                            return obj;
-                        }
-                        for (const k of AD_KEYS) {
-                            if (k in obj) delete obj[k];
-                        }
-                        for (const key in obj) {
-                            if (Object.prototype.hasOwnProperty.call(obj, key) && typeof obj[key] === 'object') {
-                                deepStripAds(obj[key], (depth || 0) + 1);
-                            }
-                        }
+                    // 2. Hapus data iklan sejak awal respon YouTube
+                    function stripAdKeys(obj) {
+                        if (!obj || typeof obj !== 'object') return obj;
+                        delete obj.adPlacements;
+                        delete obj.playerAds;
+                        delete obj.adSlots;
+                        delete obj.adBreakHeartbeatParams;
                         return obj;
                     }
 
                     let _ytInitResp = window.ytInitialPlayerResponse;
                     try {
                         Object.defineProperty(window, 'ytInitialPlayerResponse', {
-                            get: function() { return deepStripAds(_ytInitResp, 0); },
-                            set: function(val) { _ytInitResp = deepStripAds(val, 0); },
-                            configurable: true
-                        });
-                    } catch (e) {}
-
-                    let _ytInitData = window.ytInitialData;
-                    try {
-                        Object.defineProperty(window, 'ytInitialData', {
-                            get: function() { return deepStripAds(_ytInitData, 0); },
-                            set: function(val) { _ytInitData = deepStripAds(val, 0); },
+                            get: function() { return stripAdKeys(_ytInitResp); },
+                            set: function(val) { _ytInitResp = stripAdKeys(val); },
                             configurable: true
                         });
                     } catch (e) {}
@@ -1501,10 +1466,10 @@ class MainActivity : AppCompatActivity() {
                     window.fetch = async function(...args) {
                         const res = await origFetch.apply(this, args);
                         const url = (typeof args[0] === 'string') ? args[0] : (args[0] && args[0].url ? args[0].url : '');
-                        if (url.includes('/youtubei/v1/')) {
+                        if (url.includes('/youtubei/v1/player') || url.includes('/youtubei/v1/next')) {
                             try {
                                 const clone = res.clone();
-                                const json = deepStripAds(await clone.json(), 0);
+                                const json = stripAdKeys(await clone.json());
                                 return new Response(JSON.stringify(json), {
                                     status: res.status, statusText: res.statusText, headers: res.headers
                                 });
@@ -1520,11 +1485,11 @@ class MainActivity : AppCompatActivity() {
                         return origXhrOpen.apply(this, arguments);
                     };
                     XMLHttpRequest.prototype.send = function() {
-                        if (this.__ohoUrl && this.__ohoUrl.includes('/youtubei/v1/')) {
+                        if (this.__ohoUrl && (this.__ohoUrl.includes('/youtubei/v1/player') || this.__ohoUrl.includes('/youtubei/v1/next'))) {
                             this.addEventListener('readystatechange', function() {
                                 if (this.readyState === 4 && this.responseText) {
                                     try {
-                                        const cleaned = JSON.stringify(deepStripAds(JSON.parse(this.responseText), 0));
+                                        const cleaned = JSON.stringify(stripAdKeys(JSON.parse(this.responseText)));
                                         Object.defineProperty(this, 'responseText', { get: function() { return cleaned; } });
                                         Object.defineProperty(this, 'response', { get: function() { return cleaned; } });
                                     } catch (e) {}
@@ -1534,7 +1499,7 @@ class MainActivity : AppCompatActivity() {
                         return origXhrSend.apply(this, arguments);
                     };
 
-                    // 3. CSS: Sembunyikan semua elemen iklan & buat video memenuhi layar penuh
+                    // 3. CSS: Sembunyikan iklan & buat video melebar penuh tanpa ruang hitam kosong
                     const style = document.createElement('style');
                     style.innerHTML = `
                         ytm-promoted-sparkles-web-renderer,
@@ -1543,9 +1508,7 @@ class MainActivity : AppCompatActivity() {
                         ytm-ad-slot-renderer,
                         ytm-in-feed-ad-layout-renderer,
                         ytm-statement-banner-renderer,
-                        ytm-banner-promo-renderer,
-                        .ad-container, .ytp-ad-overlay-container, .ytp-ad-message-container,
-                        .ytp-ad-player-overlay, .ytp-ad-player-overlay-layout {
+                        .ad-container, .ytp-ad-overlay-container, .ytp-ad-message-container {
                             display: none !important;
                         }
                         html.oho-watch-full body {
@@ -1587,7 +1550,7 @@ class MainActivity : AppCompatActivity() {
                     `;
                     (document.head || document.documentElement).appendChild(style);
 
-                    // 4. Pembuka AudioContext & Mode Kombinasi Otomatis (Fixed-Tempo + Auto Fallback)
+                    // 4. Pembuka AudioContext saat sentuhan pertama & Mode Kombinasi Otomatis (Fixed-Tempo + Auto Fallback)
                     window.__ohoPitchSteps = 0;
                     window.__ohoRouteMode = 0;
                     window.__ohoSharedCtx = null;
@@ -1768,6 +1731,7 @@ class MainActivity : AppCompatActivity() {
                         const p = v.__ohoAudioPipe;
                         if (p.ctx.state === 'suspended') p.ctx.resume();
 
+                        // Sensor sinyal: jika video bermain tapi sinyal WebAudio nol (diblokir DRM/CORS), pindah otomatis ke fallback
                         if (!v.paused && v.volume > 0.05) {
                             const buf = new Uint8Array(p.analyser.frequencyBinCount);
                             p.analyser.getByteTimeDomainData(buf);
@@ -1785,12 +1749,8 @@ class MainActivity : AppCompatActivity() {
                             }
                         }
 
-                        if (v.__ohoAudioPipe && !v.__ohoCorsBlocked) {
-    v.preservesPitch = true;
-    v.mozPreservesPitch = true;
-    v.webkitPreservesPitch = true;
-    v.playbackRate = 1.0;
-}
+                        v.preservesPitch = true;
+                        v.playbackRate = 1.0;
 
                         if (m === 0) {
                             p.gLL.gain.value = 1.0; p.gLR.gain.value = 0.0;
@@ -1816,51 +1776,9 @@ class MainActivity : AppCompatActivity() {
                         }
                     };
 
-                    // 5. Penjaga Iklan Instan (Skip + 16x Fast-Forward) & Anti-Auto-Pause
-let wasAd = false;
-let prevMuted = false;
-
-function crushYoutubeAds() {
-    const player = document.querySelector('.html5-video-player');
-    const video = document.querySelector('video');
-    const adBadge = document.querySelector('.ytp-ad-preview-container, .ytp-ad-text, .ytp-ad-visit-advertiser-button, ytm-promoted-sparkles-web-renderer');
-    const skipBtns = document.querySelectorAll('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button, .ytm-ad-skip-button, button[class*="skip"]');
-    const isAd = (player && (player.classList.contains('ad-showing') || player.classList.contains('ad-interrupting'))) || !!adBadge || skipBtns.length > 0;
-
-    if (isAd) {
-        if (!wasAd && video) {
-            prevMuted = video.muted;
-            wasAd = true;
-        }
-
-        // 1. Coba tekan tombol lewati secepat mungkin
-        skipBtns.forEach(function(b) {
-            try { b.click(); } catch (e) {}
-        });
-
-        // 2. Jika belum berpindah, bisukan & percepat agar cepat habis
-        if (video) {
-            video.muted = true;
-            try { video.playbackRate = 16.0; } catch (e) {}
-            if (isFinite(video.duration) && video.duration > 0.3 && video.currentTime < video.duration - 0.25) {
-                try { video.currentTime = video.duration - 0.2; } catch (e) {}
-            }
-        }
-    } else if (!isAd && wasAd) {
-        if (video) {
-            video.muted = prevMuted;
-            try { video.playbackRate = 1.0; } catch (e) {}
-        }
-        wasAd = false;
-        if (typeof window.__ohoUpdateAudioProcessor === 'function') {
-            window.__ohoUpdateAudioProcessor();
-        }
-    }
-}
-
-                    const obs = new MutationObserver(crushYoutubeAds);
-                    obs.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
-
+                    // 5. Loop penjaga tampilan penuh saat nonton, auto-skip iklan, & anti-auto-pause
+                    let wasAd = false;
+                    let prevMuted = false;
                     setInterval(function() {
                         const isWatchPage = window.location.pathname.includes('/watch');
                         if (isWatchPage) {
@@ -1869,9 +1787,20 @@ function crushYoutubeAds() {
                             document.documentElement.classList.remove('oho-watch-full');
                         }
 
-                        crushYoutubeAds();
-
+                        const player = document.querySelector('.html5-video-player');
                         const video = document.querySelector('video');
+                        const isAd = player && (player.classList.contains('ad-showing') || player.classList.contains('ad-interrupting'));
+                        if (isAd && video) {
+                            if (!wasAd) { prevMuted = video.muted; wasAd = true; }
+                            video.muted = true;
+                            if (isFinite(video.duration) && video.duration > 0) video.currentTime = video.duration;
+                            const skipBtn = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-skip-ad-button');
+                            if (skipBtn) skipBtn.click();
+                        } else if (!isAd && wasAd && video) {
+                            video.muted = prevMuted;
+                            wasAd = false;
+                        }
+
                         if (video && !video.__ohoGuardAttached) {
                             video.__ohoGuardAttached = true;
                             video.__ohoOrigPause = video.pause;
@@ -1885,7 +1814,7 @@ function crushYoutubeAds() {
                                 window.__ohoUpdateAudioProcessor();
                             });
                         }
-                    }, 150);
+                    }, 250);
                 }
             })();
         """.trimIndent()
@@ -2091,17 +2020,19 @@ function crushYoutubeAds() {
         val js = """
             (function() {
                 window.__ohoPitchSteps = $steps;
-                if (typeof window.__ohoUnlockAudioContext === 'function') {
-                    window.__ohoUnlockAudioContext();
-                }
-                var v = document.querySelector('video');
-                if (v) {
-                    v.preservesPitch = true;
-                    v.mozPreservesPitch = true;
-                    v.webkitPreservesPitch = true;
-                }
                 if (typeof window.__ohoUpdateAudioProcessor === 'function') {
                     window.__ohoUpdateAudioProcessor();
+                } else {
+                    var v = document.querySelector('video');
+                    if (v) {
+                        if ($steps === 0) {
+                            v.preservesPitch = true;
+                            v.playbackRate = 1.0;
+                        } else {
+                            v.preservesPitch = false;
+                            v.playbackRate = Math.pow(2, $steps / 12);
+                        }
+                    }
                 }
             })();
         """.trimIndent()
@@ -2210,9 +2141,9 @@ function crushYoutubeAds() {
                     val limiter = dynamicsProcessing!!.getLimiterByChannelIndex(ch)
                     limiter.isEnabled = true
                     limiter.threshold = limiterThreshDb
-                    limiter.ratio = 6f
-                    limiter.attackTime = 3.0f
-                    limiter.releaseTime = 65f
+                    limiter.ratio = 12f
+                    limiter.attackTime = 1.5f
+                    limiter.releaseTime = 50f
                     dynamicsProcessing!!.setLimiterByChannelIndex(ch, limiter)
                 }
             }
@@ -2707,7 +2638,6 @@ function crushYoutubeAds() {
     }
 
     // === 24-BAND REAL-TIME SPECTRUM ANALYZER (SEMI-TRANSPARAN AGAR MUSIK YOUTUBE ANTI-PAUSE) ===
-    // === 24-BAND REAL-TIME SPECTRUM ANALYZER (MODERN NEON GRADIENT + WAVE CURVE) ===
     class RtaSpectrumView(context: Context) : View(context) {
         private val numBands = 24
         private val barLevels = FloatArray(numBands) { 0.06f }
@@ -2716,46 +2646,21 @@ function crushYoutubeAds() {
         private val d = context.resources.displayMetrics.density
 
         private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#B8060911") // Lebih transparan agar video tetap terlihat jelas
-            style = Paint.Style.FILL
+            color = Color.parseColor("#EA090C12"); style = Paint.Style.FILL
         }
         private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#26334155")
-            strokeWidth = 1f * d
+            color = Color.parseColor("#1E293B"); strokeWidth = 1f * d
         }
-        private val barPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.FILL
-        }
-        private val glowLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#38BDF8")
-            style = Paint.Style.STROKE
-            strokeWidth = 2f * d
-            strokeCap = Paint.Cap.ROUND
-            strokeJoin = Paint.Join.ROUND
-        }
-        private val glowFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.FILL
-        }
+        private val barPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
         private val peakPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#F43F5E")
-            style = Paint.Style.FILL
+            color = Color.parseColor("#F8FAFC"); style = Paint.Style.FILL
         }
         private val freqLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#94A3B8")
-            textSize = 7.5f * d
-            textAlign = Paint.Align.CENTER
-            typeface = Typeface.DEFAULT_BOLD
+            color = Color.parseColor("#94A3B8"); textSize = 8f * d; textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD
         }
         private val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#38BDF8")
-            textSize = 8.5f * d
-            textAlign = Paint.Align.LEFT
-            typeface = Typeface.DEFAULT_BOLD
+            color = Color.parseColor("#38BDF8"); textSize = 8.5f * d; textAlign = Paint.Align.LEFT; typeface = Typeface.DEFAULT_BOLD
         }
-
-        private val wavePath = Path()
-        private val areaPath = Path()
-        private var lastHeight = 0f
 
         fun updateFftData(fft: ByteArray) {
             val n = fft.size / 2
@@ -2772,11 +2677,11 @@ function crushYoutubeAds() {
                 }
                 totalEnergy += maxMag
                 val norm = (ln(1f + maxMag * 5.8f) / 3.8f).coerceIn(0.05f, 1.0f)
-                barLevels[b] = max(norm, barLevels[b] * 0.78f)
+                barLevels[b] = max(norm, barLevels[b] * 0.76f)
                 if (barLevels[b] >= peakLevels[b]) {
                     peakLevels[b] = barLevels[b]
                 } else {
-                    peakLevels[b] = max(barLevels[b], peakLevels[b] - 0.014f)
+                    peakLevels[b] = max(barLevels[b], peakLevels[b] - 0.016f)
                 }
             }
             if (totalEnergy > 1f) {
@@ -2798,11 +2703,11 @@ function crushYoutubeAds() {
                 }
                 val avg = (sum / step) * 4.0f
                 val shaped = (avg * (1.15f - (b.toFloat() / numBands) * 0.45f)).coerceIn(0.05f, 1.0f)
-                barLevels[b] = max(shaped, barLevels[b] * 0.78f)
+                barLevels[b] = max(shaped, barLevels[b] * 0.76f)
                 if (barLevels[b] >= peakLevels[b]) {
                     peakLevels[b] = barLevels[b]
                 } else {
-                    peakLevels[b] = max(barLevels[b], peakLevels[b] - 0.014f)
+                    peakLevels[b] = max(barLevels[b], peakLevels[b] - 0.016f)
                 }
             }
             postInvalidate()
@@ -2810,96 +2715,44 @@ function crushYoutubeAds() {
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-            val w = width.toFloat()
-            val h = height.toFloat()
-            canvas.drawRoundRect(0f, 0f, w, h, 6f * d, 6f * d, bgPaint)
-            canvas.drawText("OHO DSP • 24-BAND SPECTRUM", 10f * d, 13f * d, titlePaint)
+            canvas.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), 6f * d, 6f * d, bgPaint)
+            canvas.drawText("DLMS 24-BAND REAL-TIME SPECTRUM ANALYZER", 8f * d, 12f * d, titlePaint)
 
-            val topY = 20f * d
-            val bottomY = h - 15f * d
+            val topY = 17f * d
+            val bottomY = height - 13f * d
             val usableH = bottomY - topY
-            val startX = 10f * d
-            val endX = w - 10f * d
-            val totalW = endX - startX
-            val stepX = totalW / numBands
-            val barW = stepX * 0.46f // Bar lebih ramping agar lega & elegan
+            val gap = 2.4f * d
+            val barW = (width - 12f * d - gap * (numBands - 1)) / numBands
+            val startX = 6f * d
 
-            // Inisialisasi gradasi warna saat ukuran view berubah
-            if (h != lastHeight && h > 0f) {
-                lastHeight = h
-                barPaint.shader = LinearGradient(
-                    0f, bottomY, 0f, topY,
-                    intArrayOf(
-                        Color.parseColor("#06B6D4"), // Cyan di bawah (Sub/Bass)
-                        Color.parseColor("#3B82F6"), // Biru
-                        Color.parseColor("#8B5CF6"), // Ungu
-                        Color.parseColor("#EC4899")  // Pink/Magenta di puncak
-                    ),
-                    floatArrayOf(0.0f, 0.35f, 0.70f, 1.0f),
-                    Shader.TileMode.CLAMP
-                )
-                glowFillPaint.shader = LinearGradient(
-                    0f, topY, 0f, bottomY,
-                    Color.parseColor("#3838BDF8"),
-                    Color.parseColor("#0038BDF8"),
-                    Shader.TileMode.CLAMP
-                )
-            }
+            canvas.drawLine(startX, topY + usableH * 0.33f, width - startX, topY + usableH * 0.33f, gridPaint)
+            canvas.drawLine(startX, topY + usableH * 0.66f, width - startX, topY + usableH * 0.66f, gridPaint)
 
-            // Garis grid horizontal tipis
-            canvas.drawLine(startX, topY + usableH * 0.33f, endX, topY + usableH * 0.33f, gridPaint)
-            canvas.drawLine(startX, topY + usableH * 0.66f, endX, topY + usableH * 0.66f, gridPaint)
+            val segH = 3.5f * d
+            val segGap = 1.5f * d
 
-            // 1. Gambar Kurva Gelombang Halus (Spline Wave) di latar belakang bar
-            wavePath.reset()
-            areaPath.reset()
-            var prevX = startX + stepX * 0.5f
-            var prevY = bottomY - barLevels[0] * usableH
-            wavePath.moveTo(prevX, prevY)
-            areaPath.moveTo(prevX, bottomY)
-            areaPath.lineTo(prevX, prevY)
-
-            for (i in 1 until numBands) {
-                val cx = startX + i * stepX + stepX * 0.5f
-                val cy = bottomY - barLevels[i] * usableH
-                val midX = (prevX + cx) / 2f
-                wavePath.cubicTo(midX, prevY, midX, cy, cx, cy)
-                areaPath.cubicTo(midX, prevY, midX, cy, cx, cy)
-                prevX = cx
-                prevY = cy
-            }
-            areaPath.lineTo(prevX, bottomY)
-            areaPath.close()
-            canvas.drawPath(areaPath, glowFillPaint)
-            canvas.drawPath(wavePath, glowLinePaint)
-
-            // 2. Gambar Batang Kapsul Gradasi & Titik Peak
             for (i in 0 until numBands) {
-                val cx = startX + i * stepX + stepX * 0.5f
-                val left = cx - barW / 2f
-                val right = cx + barW / 2f
+                val left = startX + i * (barW + gap)
                 val barTop = bottomY - barLevels[i] * usableH
-
-                canvas.drawRoundRect(left, barTop, right, bottomY, barW / 2f, barW / 2f, barPaint)
-
-                // Titik Peak melayang di atas bar
+                var y = bottomY - segH
+                while (y >= barTop) {
+                    val ratio = (bottomY - y) / usableH
+                    barPaint.color = when {
+                        ratio > 0.78f -> Color.parseColor("#EF4444")
+                        ratio > 0.52f -> Color.parseColor("#F59E0B")
+                        else -> Color.parseColor("#10B981")
+                    }
+                    canvas.drawRect(left, y, left + barW, y + segH, barPaint)
+                    y -= (segH + segGap)
+                }
                 val peakY = bottomY - peakLevels[i] * usableH
-                canvas.drawRoundRect(
-                    left - 0.8f * d,
-                    peakY - 2.2f * d,
-                    right + 0.8f * d,
-                    peakY,
-                    1.5f * d,
-                    1.5f * d,
-                    peakPaint
-                )
+                canvas.drawRect(left, peakY - 1.5f * d, left + barW, peakY + 0.5f * d, peakPaint)
             }
 
-            // Label frekuensi di bawah
             val markers = arrayOf("31Hz", "125Hz", "500Hz", "2kHz", "8kHz", "16kHz")
             for (m in markers.indices) {
-                val x = (w / 6f) * m + (w / 12f)
-                canvas.drawText(markers[m], x, h - 3f * d, freqLabelPaint)
+                val x = (width / 6f) * m + (width / 12f)
+                canvas.drawText(markers[m], x, height - 2f * d, freqLabelPaint)
             }
         }
     }
