@@ -184,7 +184,7 @@ class MainActivity : AppCompatActivity() {
     // 10-Band EQ Standar Pro
     private val defaultFreqs10 = floatArrayOf(31f, 62f, 125f, 250f, 500f, 1000f, 2000f, 4000f, 8000f, 16000f)
     private val freqLabels10 = arrayOf("31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k")
-    private val currentGains10 = floatArrayOf(6.0f, 5.5f, 3.5f, -1.0f, -2.5f, -2.0f, 1.5f, 3.5f, 4.5f, 5.0f)
+    private val currentGains10 = floatArrayOf(8.5f, 8.0f, 4.5f, -2.0f, -3.5f, -2.0f, 1.5f, 3.5f, 4.5f, 5.0f)
 
     private var toneBass = 0f
     private var toneMid = 0f
@@ -916,7 +916,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, dp(6), 0, 0)
         }
         val presets10 = listOf(
-            "DANGDUT" to floatArrayOf(6.0f, 5.5f, 3.5f, -1.0f, -2.5f, -2.0f, 1.5f, 3.5f, 4.5f, 5.0f),
+            "DANGDUT" to floatArrayOf(8.5f, 8.0f, 4.5f, -2.0f, -3.5f, -2.0f, 1.5f, 3.5f, 4.5f, 5.0f),
             "KARAOKE" to floatArrayOf(4.0f, 3.5f, 2.0f, -1.5f, -3.5f, -4.0f, 1.0f, 3.0f, 4.0f, 4.5f),
             "CAMPURSARI" to floatArrayOf(5.0f, 4.5f, 3.0f, 0.5f, -1.5f, -2.0f, 2.0f, 4.0f, 4.5f, 5.0f),
             "CUSTOM" to loadCustomPreset()
@@ -1103,9 +1103,9 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener {
                 isSubBassActive = !isSubBassActive
                 if (isSubBassActive) {
-                    dynThresholds[0] = -18f; dynRatios[0] = 4.0f; dynPostGains[0] = 5.0f
+                    dynThresholds[0] = -22f; dynRatios[0] = 4.5f; dynPostGains[0] = 7.5f
                 } else {
-                    dynThresholds[0] = -12f; dynRatios[0] = 2.5f; dynPostGains[0] = 2.0f
+                    dynThresholds[0] = -18f; dynRatios[0] = 3.8f; dynPostGains[0] = 5.5f
                 }
                 applyMultiBandDynamics5(); refreshDynamicTabUi(); updateMbcButtonsUi(); saveLastSessionState()
             }
@@ -1786,11 +1786,11 @@ class MainActivity : AppCompatActivity() {
                         }
 
                         if (v.__ohoAudioPipe && !v.__ohoCorsBlocked) {
-    v.preservesPitch = true;
-    v.mozPreservesPitch = true;
-    v.webkitPreservesPitch = true;
-    v.playbackRate = 1.0;
-}
+                            v.preservesPitch = true;
+                            v.mozPreservesPitch = true;
+                            v.webkitPreservesPitch = true;
+                            v.playbackRate = 1.0;
+                        }
 
                         if (m === 0) {
                             p.gLL.gain.value = 1.0; p.gLR.gain.value = 0.0;
