@@ -3,9 +3,47 @@
 #include <algorithm>
 #include <cmath>
 
-// Filter tambahan internal di dalam CPP (tanpa ubah AudioEngine.h)
-static BiquadEQ subBodyFilter;   // Mengangkat getaran dalam (62 Hz)
-static BiquadEQ boxCutFilter;    // Membersihkan frekuensi kotak/mendem (380 Hz)
+namespace {
+struct LocalBiquad {
+    float b0 = 1.0f;
+    float b1 = 0.0f;
+    float b2 = 0.0f;
+    float a1 = 0.0f;
+    float a2 = 0.0f;
+    float z1 = 0.0f;
+    float z2 = 0.0f;
+
+    void setPeaking(float sr, float freq, float q, float gainDb) {
+        if (sr <= 0.0f || q <= 0.0001f) {
+            b0 = 1.0f; b1 = 0.0f; b2 = 0.0f; a1 = 0.0f; a2 = 0.0f;
+            return;
+        }
+        const float pi = 3.14159265358979323846f;
+        float A = std::pow(10.0f, gainDb / 40.0f);
+        float omega = 2.0f * pi * freq / sr;
+        float sn = std::sin(omega);
+        float cs = std::cos(omega);
+        float alpha = sn / (2.0f * q);
+
+        float a0 = 1.0f + alpha / A;
+        b0 = (1.0f + alpha * A) / a0;
+        b1 = (-2.0f * cs) / a0;
+        b2 = (1.0f - alpha * A) / a0;
+        a1 = (-2.0f * cs) / a0;
+        a2 = (1.0f - alpha / A) / a0;
+    }
+
+    float process(float x) {
+        float y = b0 * x + z1;
+        z1 = b1 * x - a1 * y + z2;
+        z2 = b2 * x - a2 * y;
+        return y;
+    }
+};
+
+LocalBiquad subBodyFilter; // Mengangkat getaran dalam (62 Hz)
+LocalBiquad boxCutFilter;  // Membersihkan frekuensi kotak/mendem (380 Hz)
+} // namespace
 
 void AudioEngine::start() {
     if (isRunning) return;
